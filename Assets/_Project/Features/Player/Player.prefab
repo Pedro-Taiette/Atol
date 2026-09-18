@@ -166,6 +166,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::PlayerInputHandler
   GroundedMovement: {fileID: 3683730610663036522}
   MovementAction: {fileID: -1680190386980627800, guid: 052faaac586de48259a63d0c4782560b, type: 3}
+  JumpAction: {fileID: -2099379676528639254, guid: 052faaac586de48259a63d0c4782560b, type: 3}
 --- !u!114 &3683730610663036522
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -181,7 +182,11 @@ MonoBehaviour:
   ReferenceTransform: {fileID: 0}
   Controller: {fileID: 5597441788725092936}
   Speed: 6
+  JumpHeight: 2
+  GravityMultiplier: 1
   TurnSmoothTime: 0.1
+  Acceleration: 50
+  Deceleration: 25
 --- !u!1 &1251915431351904075
 GameObject:
   m_ObjectHideFlags: 0
@@ -227,7 +232,7 @@ GameObject:
   - component: {fileID: 7959634609839117347}
   - component: {fileID: 125459495872790258}
   m_Layer: 0
-  m_Name: Body
+  m_Name: DebugBody
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -359,7 +364,7 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 6581715764922298619}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.10450156, y: -0.0000000016368139, z: 1.7199131e-10, w: 0.9945247}
+  m_LocalRotation: {x: 0.10450156, y: -7.13057e-10, z: 7.492555e-11, w: 0.9945247}
   m_LocalPosition: {x: 0.5, y: 1.25, z: -4}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
@@ -588,12 +593,12 @@ MonoBehaviour:
   IgnoreTag: Player
   TransparentLayers:
     serializedVersion: 2
-    m_Bits: 0
+    m_Bits: 64
   MinimumDistanceFromTarget: 0.3
   AvoidObstacles:
     Enabled: 1
     DistanceLimit: 0
-    MinimumOcclusionTime: 0
+    MinimumOcclusionTime: 0.35
     CameraRadius: 0.15
     UseFollowTarget:
       Enabled: 1
