@@ -15,8 +15,11 @@ public class GroundedMovement : MonoBehaviour, IMovement
     public float TurnSmoothTime = 0.1f;
     public float Acceleration = 20f;
     public float Deceleration = 15f;
+    public bool UseCoyoteTiming = true;
+    public float CoyoteTime = 0.1f;
 
     private float _turnSmoothVelocity;
+    private float _timeSinceLastGrounded;
 
     private Vector3 _direction;
     private Vector3 _velocity;
@@ -28,13 +31,27 @@ public class GroundedMovement : MonoBehaviour, IMovement
 
     public void Jump(bool released)
     {
-        if (!Controller.isGrounded || released)
+        if (released)
             return;
+
+        if (!Controller.isGrounded)
+        {
+            if (!UseCoyoteTiming)
+                return;
+            
+            if (_timeSinceLastGrounded <= 0)
+                return;
+
+            _timeSinceLastGrounded = 0f;
+        }
 
         _velocity.y += Mathf.Sqrt(JumpHeight * -2f * Physics.gravity.y);
     }
     public void ApplyMovement()
     {
+        if (UseCoyoteTiming)
+            _timeSinceLastGrounded = Controller.isGrounded ? CoyoteTime : Mathf.MoveTowards(_timeSinceLastGrounded, 0f, Time.deltaTime);
+
         Vector3 targetHorizontalVelocity = Vector3.zero;
 
         if (_direction.sqrMagnitude > 0f)
