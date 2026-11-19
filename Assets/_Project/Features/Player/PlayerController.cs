@@ -1,6 +1,7 @@
 using Assets._Project.Features.Boat;
 using Assets._Project.Features.Movement;
 using Assets._Project.Features.StatusViewModels;
+using Assets._Project.Features.WaterEffects;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -100,8 +101,20 @@ public sealed class PlayerController : MonoBehaviour
 
         if (GroundedMovement != null && GroundedMovement.Controller == null)
             GroundedMovement.Controller = CharacterController;
+        // Waterline contact foam must not depend on switching the movement motor to
+        // SwimmingMovement: shallow water can intersect the capsule while the player
+        // is still walking on the seabed / shoreline.
+        PlayerWaterContactFoam playerWaterFoam = GetComponent<PlayerWaterContactFoam>();
+        if (playerWaterFoam == null)
+            playerWaterFoam = gameObject.AddComponent<PlayerWaterContactFoam>();
+        playerWaterFoam.Initialize(this, Ocean, CharacterController);
+
         if (SwimmingMovement != null)
         {
+            // One player-level emitter owns both swimming and wading trails. It tracks
+            // multiple contact points like BoatFoamEmitter, avoiding a thin single-point
+            // trail and preventing ownership from changing when movement modes switch.
+            SwimmingMovement.UseExternalPlayerFoam = true;
             if (SwimmingMovement.Controller == null)
                 SwimmingMovement.Controller = CharacterController;
             if (SwimmingMovement.Ocean == null)
@@ -188,15 +201,20 @@ public sealed class PlayerController : MonoBehaviour
 
     /// <summary>
     /// Changes the active movement without dropping input or horizontal momentum.
-    /// Vertical grounded velocity is deliberately reset on water transitions so
-    /// stale gravity cannot accumulate while the grounded motor is inactive.
+    /// Stale grounded gravity is reset on water transitions, but active airborne
+    /// jump/fall velocity is handed to the swimming motor instead of being discarded.
     /// </summary>
-    public bool SetActiveMovement(IMovement movement)
+    private static bool IsSameMovement(IMovement current, UnityEngine.Object expected)
+    {
+        return (current as UnityEngine.Object) == expected;
+    }
+
+    public bool SetActiveMovement(IMovement movement, bool preserveGroundCoyote = false)
     {
         if (movement == null)
             return false;
 
-        if (object.ReferenceEquals(activeMovement, movement))
+        if (IsSameMovement(activeMovement, movement as UnityEngine.Object))
         {
             activeMovement.Move(latestDirection);
             return true;
@@ -209,20 +227,41 @@ public sealed class PlayerController : MonoBehaviour
             targetState.SetPlanarVelocity(sourceState.PlanarVelocity);
         }
 
-        if (object.ReferenceEquals(movement, SwimmingMovement))
+        if (IsSameMovement(movement, SwimmingMovement))
         {
+            float verticalHandoff = 0f;
+            bool carryAirborneVerticalMotion = false;
+            GroundedMovement previousGrounded = previousMovement as GroundedMovement;
+            if (previousGrounded != null)
+            {
+                // IsGrounded can still reflect the last collision result for the frame
+                // in which Jump() was accepted. The jump flag takes precedence over
+                // that cached result; a non-jump fall is carried only when unsupported.
+                carryAirborneVerticalMotion = previousGrounded.IsJumpInProgress ||
+                    (!previousGrounded.IsGrounded && Mathf.Abs(previousGrounded.VerticalVelocity) > 0.05f);
+                if (carryAirborneVerticalMotion)
+                    verticalHandoff = previousGrounded.VerticalVelocity;
+            }
+
             SwimmingMovement.ResetVerticalVelocity();
-            if (previousMovement is GroundedMovement previousGrounded)
-                previousGrounded.ResetVerticalVelocity();
+            if (previousGrounded != null)
+            {
+                // Preserve the last-grounded timestamp for the full coyote window.
+                // If a jump/fall is already airborne, ResetVerticalVelocity(false)
+                // now preserves its arc and the swimming motor receives that velocity.
+                previousGrounded.ResetVerticalVelocity(clearCoyoteWindow: false);
+                if (carryAirborneVerticalMotion)
+                    SwimmingMovement.SetVerticalVelocity(verticalHandoff);
+            }
         }
-        else if (object.ReferenceEquals(movement, GroundedMovement) &&
+        else if (IsSameMovement(movement, GroundedMovement) &&
                  previousMovement is SwimmingMovement)
         {
-            GroundedMovement.ResetVerticalVelocity();
+            GroundedMovement.ResetVerticalVelocity(clearCoyoteWindow: !preserveGroundCoyote);
         }
 
-        if (object.ReferenceEquals(previousMovement, BoatMovement) &&
-            !object.ReferenceEquals(movement, BoatMovement) && BoatMovement != null)
+        if (IsSameMovement(previousMovement, BoatMovement) &&
+            !IsSameMovement(movement, BoatMovement) && BoatMovement != null)
         {
             BoatMovement.ClearBoat();
         }
@@ -813,11 +852,42 @@ public sealed class PlayerController : MonoBehaviour
             ? CharacterController.bounds.center.y
             : transform.position.y + 0.9f;
 
-        if (!object.ReferenceEquals(activeMovement, SwimmingMovement) && surfaceHeight >= bodyMidpoint)
+        bool currentlySwimming = IsSameMovement(activeMovement, SwimmingMovement);
+        if (!currentlySwimming && surfaceHeight >= bodyMidpoint)
+        {
+            // Surface samples are asynchronous. A sample requested just before a
+            // coyote jump can arrive after launch; entering swimming here would call
+            // ResetVerticalVelocity on GroundedMovement and cancel the upward jump.
+            // Defer the mode switch while an accepted grounded/coyote jump is rising.
+            bool groundedJumpRising = GroundedMovement != null &&
+                                      GroundedMovement.IsJumpInProgress &&
+                                      GroundedMovement.VerticalVelocity > 0.05f;
+            if (groundedJumpRising)
+                return;
+
             EnterSwimming();
-        else if (object.ReferenceEquals(activeMovement, SwimmingMovement) &&
-                 !SwimmingMovement.IsHopping &&
-                 surfaceHeight < bodyMidpoint - Mathf.Max(0f, SwimmingExitHysteresis))
+            return;
+        }
+
+        if (!currentlySwimming || surfaceHeight >= bodyMidpoint - Mathf.Max(0f, SwimmingExitHysteresis))
+            return;
+
+        // A surface sample alone never proves the player is back on land. In
+        // particular, the CharacterController can still report its previous grounded
+        // result for one frame when a wave starts lifting the capsule. Keep the swim
+        // motor (and Swim Falling animation) active during hops, wave ejection, or
+        // upward motion; only hand off after a post-Move solid-ground contact.
+        bool hasSolidGroundContact = CharacterController != null &&
+                                     CharacterController.enabled &&
+                                     CharacterController.isGrounded &&
+                                     (GroundedMovement == null || GroundedMovement.IsGrounded);
+        bool swimStillAirborne = SwimmingMovement.IsHopInProgress ||
+                                 SwimmingMovement.IsWaveAirborne ||
+                                 SwimmingMovement.VerticalVelocity > 0.1f;
+        // IsWaveAirborne is intentionally NOT a blocker once solid ground is
+        // confirmed: a wave can carry the player onto dry terrain above the waterline.
+        // The ground contact is the decisive condition for leaving swimming.
+        if (hasSolidGroundContact && !swimStillAirborne)
             ExitSwimming();
     }
 
@@ -835,7 +905,35 @@ public sealed class PlayerController : MonoBehaviour
             return;
         }
 
-        activeMovement?.Jump(context.canceled);
+        if (context.canceled)
+        {
+            activeMovement?.Jump(true);
+            return;
+        }
+
+        // Do not let automatic water detection consume the last fraction of the
+        // grounded coyote window. If the player stepped off a ledge moments ago,
+        // accept the jump through GroundedMovement even if a wave caused the mode
+        // switch to SwimmingMovement in the meantime.
+        bool groundedMotorIsActive = IsSameMovement(activeMovement, GroundedMovement);
+        bool hasGroundSupport = GroundedMovement != null &&
+                                GroundedMovement.HasNearbyGroundSupport(0.02f, ~0);
+        bool canUseGroundCoyote = GroundedMovement != null && GroundedMovement.CanCoyoteJump &&
+                                  (groundedMotorIsActive || !hasGroundSupport);
+        if (canUseGroundCoyote)
+        {
+            // Automatic water detection can switch to SwimmingMovement immediately
+            // after a ledge departure. Preserve the timestamped grace window and route
+            // that input back through GroundedMovement. A solid seabed support probe
+            // prevents an ordinary swim hop from being misclassified as coyote time.
+            if (!groundedMotorIsActive)
+                SetActiveMovement(GroundedMovement, preserveGroundCoyote: true);
+
+            GroundedMovement.Jump(false);
+            return;
+        }
+
+        activeMovement?.Jump(false);
     }
 
     private void OnDiveChanged(InputAction.CallbackContext context)

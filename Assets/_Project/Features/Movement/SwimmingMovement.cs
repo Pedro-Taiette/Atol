@@ -39,15 +39,15 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
     [Tooltip("Fallback offset from actor root to body center.")]
     [Min(0f)] public float AssumedBodyCenterOffset = 0.9f;
     [Tooltip("Strength of the spring pulling the body toward its surface-floating height.")]
-    [Min(0f)] public float SurfaceSpring = 10f;
+    [Min(0f)] public float SurfaceSpring = 6.5f;
     [Tooltip("Damps vertical motion without making the actor feel glued to the water.")]
-    [Min(0f)] public float VerticalDamping = 4.8f;
+    [Min(0f)] public float VerticalDamping = 8f;
     [Tooltip("Scales the measured vertical speed of the water. The swimmer follows both rising and falling waves.")]
-    [Min(0f)] public float WaveLiftMultiplier = 1.0f;
+    [Min(0f)] public float WaveLiftMultiplier = 0.3f;
     [Tooltip("How strongly the swimmer matches the water surface vertical velocity in both directions. 0 ignores wave motion; 1 fully follows it before WaveLiftMultiplier is applied.")]
-    [Range(0f, 2f)] public float WaveVelocityFollow = 0.9f;
+    [Range(0f, 2f)] public float WaveVelocityFollow = 0.2f;
     [Tooltip("Limits noisy surface-height changes when estimating wave vertical velocity.")]
-    [Min(0.1f)] public float MaximumWaveVerticalSpeed = 3.5f;
+    [Min(0.1f)] public float MaximumWaveVerticalSpeed = 1.0f;
     [Tooltip("Extra upward acceleration available to wave buoyancy input and jump/swim-up input.")]
     [Min(0f)] public float ExtraBuoyancyAcceleration = 8f;
     [Tooltip("Downward acceleration available to drowning/submerge input.")]
@@ -56,10 +56,18 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
     [Range(0f, 1f)] public float DrowningBuoyancyRetention = 0.18f;
     [Tooltip("Fraction of wave-follow force retained while drowning pull is active.")]
     [Range(0f, 1f)] public float DrowningWaveResponse = 0.3f;
-    [Min(0f)] public float MaximumUpwardAcceleration = 24f;
-    [Min(0f)] public float MaximumDownwardAcceleration = 22f;
-    [Min(0.1f)] public float MaximumUpwardSpeed = 2.8f;
-    [Min(0.1f)] public float MaximumDownwardSpeed = 3f;
+    [Min(0f)] public float MaximumUpwardAcceleration = 8f;
+    [Min(0f)] public float MaximumDownwardAcceleration = 8f;
+    [Min(0.1f)] public float MaximumUpwardSpeed = 1.35f;
+    [Min(0.1f)] public float MaximumDownwardSpeed = 1.35f;
+
+    [Header("Wave Ejection Detection")]
+    [Tooltip("The body centre must rise this far above the water surface before a wave ejection is recognized.")]
+    [Min(0f)] public float WaveEjectionHeight = 0.2f;
+    [Tooltip("Once wave-ejected, clear the state when the body centre returns this close to the water surface.")]
+    [Min(0f)] public float WaveReentryMargin = 0.05f;
+    [Tooltip("Brief confirmation time filters out one-frame surface-sampling noise.")]
+    [Min(0f)] public float WaveEjectionConfirmationTime = 0.08f;
 
     [Header("Swimming Vertical Input")]
     [Tooltip("Acceleration applied while the jump/up input is held.")]
@@ -84,15 +92,19 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
     [Tooltip("Leave soft foam on the water surface while swimming and on hop splashes.")]
     public bool EmitFoam = true;
     [Tooltip("Planar speed (m/s) at which swim foam is at full intensity.")]
-    [Min(0.1f)] public float FoamFullSpeed = 3f;
+    [Min(0.1f)] public float FoamFullSpeed = 2.8f;
     [Tooltip("Swim foam stamp radius (m) at low / full speed. Small: a swimmer pushes little water.")]
-    public Vector2 FoamRadius = new Vector2(0.18f, 0.4f);
+    public Vector2 FoamRadius = new Vector2(0.26f, 0.62f);
     [Tooltip("Foam added per second at full speed.")]
-    [Min(0f)] public float FoamRate = 6f;
+    [Min(0f)] public float FoamRate = 22f;
     [Tooltip("Foam stamps per second (fixed rate, independent of physics steps).")]
     [Range(5f, 60f)] public float FoamEmitHz = 18f;
     [Tooltip("Metres ahead of the body where the chest pushes the water; foam is stamped there.")]
     [Min(0f)] public float FoamLeadOffset = 0.35f;
+    [Tooltip("When driven by PlayerController, continuous player foam is emitted by PlayerWaterContactFoam so shallow-water walking and swimming share one reliable trail owner. NPC swimmers leave this disabled.")]
+    [HideInInspector] public bool UseExternalPlayerFoam;
+    [Tooltip("Seconds between visible circular surface ripples for NPC swimmers. Player uses PlayerWaterContactFoam instead.")]
+    [Min(0.25f)] public float RippleInterval = 2.1f;
 
     [Header("Jump Hop (out of the water)")]
     [Tooltip("Jump becomes a small hop out of the water that costs stamina. Off = legacy hold-to-swim-up.")]
@@ -118,9 +130,21 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
     [Min(0f)] public float JumpLandingGrace = 0.5f;
 
     [Header("Surface Sampling")]
-    [Min(0.02f)] public float SurfaceSampleInterval = 0.12f;
-    [Min(0.05f)] public float MaximumSurfaceSampleAge = 0.5f;
-    [Range(0f, 1f)] public float WaveVelocitySmoothing = 0.4f;
+    [Min(0.02f)] public float SurfaceSampleInterval = 0.10f;
+    [Min(0.05f)] public float MaximumSurfaceSampleAge = 0.45f;
+    [Range(0f, 1f)] public float WaveVelocitySmoothing = 0.3f;
+
+    [Header("Stable Surface Following")]
+    [Tooltip("Smooths the local water height before it becomes the swimmer's buoyancy target.")]
+    [Range(0.04f, 0.5f)] public float SurfaceHeightSmoothTime = 0.16f;
+    [Tooltip("Maximum rate (m/s) at which the swimmer's surface target may move. Prevents a single noisy sample from launching the character.")]
+    [Min(0.1f)] public float MaximumSurfaceFollowSpeed = 2.0f;
+    [Tooltip("Hold the last valid wave sample briefly if a GPU readback is delayed; then blend gently toward mean sea level.")]
+    [Min(0.1f)] public float SurfaceSampleHoldTime = 0.9f;
+    [Tooltip("Distance from the capsule centre to the four surrounding water probes, as a multiple of the capsule radius.")]
+    [Range(0.2f, 1.2f)] public float SurfaceProbeSpread = 0.7f;
+    [Tooltip("Limits how far any outer probe may differ from the centre height when averaging a steep crest or trough.")]
+    [Min(0.05f)] public float MaximumProbeHeightDifference = 0.28f;
 
     private Vector2 inputDirection;
     private float verticalInput;
@@ -132,8 +156,11 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
     private Vector3 horizontalVelocity;
 
     private float sampledSurfaceHeight;
-    private float sampledSurfaceVerticalVelocity;
     private float sampledSurfaceTime = -1000f;
+    private float smoothedSurfaceHeight;
+    private float surfaceHeightSmoothVelocity;
+    private float filteredSurfaceVerticalVelocity;
+    private bool hasSmoothedSurfaceHeight;
     private float nextSampleRequestTime;
     private bool hasSurfaceSample;
     private bool sampleRequestPending;
@@ -146,13 +173,16 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
     private float jumpWindupTimer = -1f;
     private float nextJumpTime;
     private bool hopAirborne;
-    private bool hopLandedOnGround;
+    private float hopDescendingDuration;
+    private bool waveAirborne;
+    private float waveEjectionTimer;
     private float hopLandedTime = -1000f;
     private WaterContactFoam foam;
     private Vector3 lastFoamPoint;
     private bool hasFoamPoint;
     private float rippleTimer;
     private float foamAccumulator;
+    private float wakeDistanceAccumulator;
 
     private bool bodyGravityWasEnabled;
     private bool bodyGravityCached;
@@ -171,16 +201,21 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
     public Vector3 PlanarVelocity => Vector3.ProjectOnPlane(horizontalVelocity, Vector3.up);
     public float VerticalVelocity => verticalVelocity;
     public float CurrentBuoyancyInput => buoyancyInput;
-    /// <summary>True during the jump wind-up, the hop itself and a short grace after water or ground landing.</summary>
+    /// <summary>True during the jump wind-up, the hop itself and a short landing grace.</summary>
     public bool IsHopping => jumpWindupTimer >= 0f || hopAirborne ||
                              Time.time - hopLandedTime < JumpLandingGrace;
+    /// <summary>True only while the jump wind-up or airborne hop is active; excludes post-landing grace.</summary>
+    public bool IsHopInProgress => jumpWindupTimer >= 0f || hopAirborne;
+    /// <summary>True while performing the deliberate swimming hop.</summary>
     public bool IsAirborne => hopAirborne;
+    /// <summary>True when a strong wave has lifted the body clear of the waterline.</summary>
+    public bool IsWaveAirborne => waveAirborne && !hopAirborne;
     /// <summary>0 = fully submerged (no wave push), 1 = fully exposed.</summary>
     public float WaveDriftExposure => driftExposure;
     public Vector3 WaveDriftOffset => new Vector3(driftOffset.x, 0f, driftOffset.y);
     /// <summary>Raised when the hop starts leaving the water.</summary>
     public event System.Action HopStarted;
-    /// <summary>Raised when a hop lands in water or on solid ground. Argument = impact speed.</summary>
+    /// <summary>Raised when the swimmer re-enters the water after a hop. Argument = impact speed.</summary>
     public event System.Action<float> HopLanded;
     /// <summary>Raised when a jump is refused (cooldown, stamina, too deep). Argument = reason.</summary>
     public event System.Action<string> HopRefused;
@@ -195,6 +230,8 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
     {
         sampleGeneration++;
         sampleRequestPending = false;
+        if (!hasSurfaceSample)
+            hasSmoothedSurfaceHeight = false;
         SetRigidbodyGravityControlled(true);
     }
 
@@ -213,8 +250,15 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
         driftVelocity = Vector2.zero;
         jumpWindupTimer = -1f;
         hopAirborne = false;
-        hopLandedOnGround = false;
-        hopLandedTime = -1000f;
+        hopDescendingDuration = 0f;
+        waveAirborne = false;
+        waveEjectionTimer = 0f;
+        hasSmoothedSurfaceHeight = false;
+        hasSurfaceSample = false;
+        sampledSurfaceTime = -1000f;
+        sampledLattice = Vector2.zero;
+        surfaceHeightSmoothVelocity = 0f;
+        filteredSurfaceVerticalVelocity = 0f;
         SetRigidbodyGravityControlled(false);
     }
 
@@ -244,8 +288,16 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
         VerticalSwimAcceleration = Mathf.Max(0f, VerticalSwimAcceleration);
         SurfaceSampleInterval = Mathf.Max(0.02f, SurfaceSampleInterval);
         MaximumSurfaceSampleAge = Mathf.Max(0.05f, MaximumSurfaceSampleAge);
+        SurfaceHeightSmoothTime = Mathf.Clamp(SurfaceHeightSmoothTime, 0.04f, 0.5f);
+        MaximumSurfaceFollowSpeed = Mathf.Max(0.1f, MaximumSurfaceFollowSpeed);
+        SurfaceSampleHoldTime = Mathf.Max(MaximumSurfaceSampleAge, SurfaceSampleHoldTime);
+        SurfaceProbeSpread = Mathf.Clamp(SurfaceProbeSpread, 0.2f, 1.2f);
+        MaximumProbeHeightDifference = Mathf.Max(0.05f, MaximumProbeHeightDifference);
         DriftFadeEnd = Mathf.Max(DriftFadeStart + 0.01f, DriftFadeEnd);
         JumpStaminaCost = Mathf.Max(0f, JumpStaminaCost);
+        WaveEjectionHeight = Mathf.Max(0f, WaveEjectionHeight);
+        WaveReentryMargin = Mathf.Max(0f, WaveReentryMargin);
+        WaveEjectionConfirmationTime = Mathf.Max(0f, WaveEjectionConfirmationTime);
     }
 
     public void Move(Vector2 direction)
@@ -305,7 +357,6 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
         }
 
         jumpWindupTimer = 0f;
-        hopLandedOnGround = false;
         nextJumpTime = Time.time + JumpDelay + JumpCooldown;
         return true;
     }
@@ -349,6 +400,7 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
         if (dt <= 0f)
             return;
 
+        UpdateFilteredSurfaceTarget(dt);
         Transform actor = ActorTransform;
         Vector3 desiredDirection = GetCameraRelativeDirection(inputDirection, actor);
         Vector3 targetHorizontalVelocity = desiredDirection * Speed;
@@ -372,6 +424,8 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
         float bodyHeight = GetBodyHeight();
         float targetCenterY = surfaceHeight + (0.5f - TargetSubmersion) * bodyHeight;
 
+        UpdateWaveAirborneState(surfaceHeight, actor, dt);
+
         if (jumpWindupTimer >= 0f)
         {
             jumpWindupTimer += dt;
@@ -386,65 +440,66 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
         if (hopAirborne)
         {
             verticalVelocity = Mathf.Max(verticalVelocity - JumpGravity * dt, -MaximumDownwardSpeed * 3f);
-            // A hop can finish in either the water or on dry terrain. Requiring
-            // heightError >= 0 alone leaves hopAirborne stuck forever when the
-            // ground is higher than the water's floating height.
-            bool landedOnSolidGround = Controller != null && Controller.enabled && Controller.isGrounded;
-            bool reachedWaterLandingHeight = heightError >= 0f;
-            if (verticalVelocity <= 0f && (landedOnSolidGround || reachedWaterLandingHeight))
+            if (verticalVelocity <= 0f)
+                hopDescendingDuration += dt;
+
+            // A hop can finish by returning to the water's floating target OR by
+            // landing on solid terrain above that target. Treat confirmed downward
+            // ground contact as a valid landing so hopAirborne cannot remain stuck
+            // true on a high shoreline.
+            bool descending = verticalVelocity <= 0f;
+            bool touchedSolidGround = descending && Controller != null &&
+                                      Controller.enabled && Controller.isGrounded;
+            bool returnedToWater = descending && heightError >= 0f;
+            if (touchedSolidGround || returnedToWater)
             {
                 hopAirborne = false;
-                hopLandedOnGround = landedOnSolidGround;
                 hopLandedTime = Time.time;
-                float impact = -verticalVelocity;
-                verticalVelocity = landedOnSolidGround
-                    ? 0f
-                    : Mathf.Max(verticalVelocity, -MaximumDownwardSpeed);
-                if (!landedOnSolidGround)
-                    EmitHopSplash(Mathf.Clamp01(0.35f + impact / 8f));
+                float impact = Mathf.Max(0f, -verticalVelocity);
+                float fallDuration = hopDescendingDuration;
+                hopDescendingDuration = 0f;
+                verticalVelocity = touchedSolidGround ? 0f : Mathf.Max(verticalVelocity, -MaximumDownwardSpeed);
+
+                // Only spawn the splash when the surface intersects the capsule.
+                // Landing on dry ground above the waterline is a land impact, not a
+                // water-entry event.
+                float bodyBottom = GetBodyCenterY(actor) - bodyHeight * 0.5f;
+                bool waterTouchesBody = surfaceHeight >= bodyBottom;
+                if (waterTouchesBody)
+                    EmitHopSplash(Mathf.Clamp01(0.35f + impact / 8f), fallDuration, true);
                 HopLanded?.Invoke(impact);
             }
         }
 
-        // Do not let the water spring pull the character down through a shore
-        // collider during the landing grace period. If the player remains in the
-        // swimming mode (for example, after touching an underwater floor), normal
-        // buoyancy resumes when the grace period ends.
-        bool holdingSolidGroundLanding = hopLandedOnGround &&
-                                         Time.time - hopLandedTime < JumpLandingGrace &&
-                                         Controller != null && Controller.enabled && Controller.isGrounded;
-        if (holdingSolidGroundLanding)
-            verticalVelocity = 0f;
-
-        if (!hopAirborne && !holdingSolidGroundLanding)
+        if (!hopAirborne)
         {
-            float drowningAmount = Mathf.Max(0f, -buoyancyInput);
-            float springRetention = Mathf.Lerp(1f, DrowningBuoyancyRetention, drowningAmount);
-            float springAcceleration = heightError * SurfaceSpring * springRetention;
+        float drowningAmount = Mathf.Max(0f, -buoyancyInput);
+        float springRetention = Mathf.Lerp(1f, DrowningBuoyancyRetention, drowningAmount);
+        float springAcceleration = heightError * SurfaceSpring * springRetention;
 
-            // Treat the ocean surface as a moving reference frame. Damping is applied
-            // against the sampled wave's vertical velocity, not against world-zero.
-            // This makes the swimmer travel DOWN with a receding trough just as readily
-            // as it rises with an approaching crest, preventing the body being left
-            // suspended above a falling wave.
-            float waveResponse = Mathf.Lerp(1f, DrowningWaveResponse, drowningAmount);
-            float freshWaveVelocity = GetCurrentSurfaceVerticalVelocity();
-            float targetWaveVelocity = freshWaveVelocity * WaveVelocityFollow
-                                       * WaveLiftMultiplier * waveResponse;
-            float dampingAcceleration = (targetWaveVelocity - verticalVelocity) * VerticalDamping;
-            float swimAcceleration = verticalInput * VerticalSwimAcceleration;
-            float buoyancyControlAcceleration = buoyancyInput >= 0f
-                ? buoyancyInput * ExtraBuoyancyAcceleration
-                : buoyancyInput * DrowningPullAcceleration;
+        // Treat the ocean surface as a moving reference frame. Damping is applied
+        // against the sampled wave's vertical velocity, not against world-zero.
+        // This makes the swimmer travel DOWN with a receding trough just as readily
+        // as it rises with an approaching crest, preventing the body being left
+        // suspended above a falling wave.
+        float waveResponse = Mathf.Lerp(1f, DrowningWaveResponse, drowningAmount);
+        float freshWaveVelocity = GetCurrentSurfaceVerticalVelocity();
+        float targetWaveVelocity = freshWaveVelocity * WaveVelocityFollow
+                                   * WaveLiftMultiplier * waveResponse;
+        float dampingAcceleration = (targetWaveVelocity - verticalVelocity) * VerticalDamping;
+        float swimAcceleration = verticalInput * VerticalSwimAcceleration;
+        float buoyancyControlAcceleration = buoyancyInput >= 0f
+            ? buoyancyInput * ExtraBuoyancyAcceleration
+            : buoyancyInput * DrowningPullAcceleration;
 
-            float verticalAcceleration = springAcceleration + dampingAcceleration
-                                         + swimAcceleration + buoyancyControlAcceleration;
-            verticalAcceleration = Mathf.Clamp(
-                verticalAcceleration, -MaximumDownwardAcceleration, MaximumUpwardAcceleration);
-            verticalVelocity = Mathf.Clamp(
-                verticalVelocity + verticalAcceleration * dt,
-                -MaximumDownwardSpeed,
-                MaximumUpwardSpeed);
+        float verticalAcceleration = springAcceleration + dampingAcceleration
+                                     + swimAcceleration + buoyancyControlAcceleration;
+        verticalAcceleration = Mathf.Clamp(
+            verticalAcceleration, -MaximumDownwardAcceleration, MaximumUpwardAcceleration);
+        verticalVelocity = Mathf.Clamp(
+            verticalVelocity + verticalAcceleration * dt,
+            -MaximumDownwardSpeed,
+            MaximumUpwardSpeed);
         }
 
         UpdateContactFoam(dt, actor, surfaceHeight);
@@ -455,6 +510,16 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
         if (Controller != null)
         {
             Controller.Move(velocity * dt);
+            // CharacterController.isGrounded is only valid after Move. Clamp the
+            // motor's downward velocity and clear wave-ejection state on real solid
+            // contact so the player controller can reliably hand off to grounded mode.
+            if (Controller.isGrounded)
+            {
+                if (verticalVelocity < 0f)
+                    verticalVelocity = 0f;
+                waveAirborne = false;
+                waveEjectionTimer = 0f;
+            }
         }
         else if (Body != null)
         {
@@ -482,62 +547,177 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
 
         Vector3 point = actor.position;
         point.y = surfaceHeight;
-        float speed01 = hopAirborne ? 0f : Mathf.Clamp01(horizontalVelocity.magnitude / FoamFullSpeed);
 
-        // Foam only when actually moving (squared smoothstep: slow swimming gives almost none),
-        // stamped at a fixed rate ahead of the chest. Treading water is shown by ripples only.
-        foamAccumulator += dt;
-        float emitInterval = 1f / Mathf.Max(5f, FoamEmitHz);
-        if (foamAccumulator >= emitInterval)
+        // Contact foam belongs to the visible waterline, not merely to the fact that
+        // the swimming movement motor is active. Suppress it when the swimmer is
+        // completely clear of the surface or deeply submerged.
+        float bodyHeight = GetBodyHeight();
+        float bodyBottom = GetBodyCenterY(actor) - bodyHeight * 0.5f;
+        float submergedFraction = Mathf.Clamp01((surfaceHeight - bodyBottom) / Mathf.Max(0.1f, bodyHeight));
+        float waterlineContact = Smooth01Between(0.02f, 0.14f, submergedFraction)
+                               * (1f - Smooth01Between(0.78f, 0.94f, submergedFraction));
+        if (waterlineContact <= 0.001f)
         {
-            float step = foamAccumulator;
+            hasFoamPoint = false;
             foamAccumulator = 0f;
-
-            float curve = Mathf.SmoothStep(0.2f, 1f, speed01);
-            curve *= curve;
-            if (curve > 0.001f)
-            {
-                Vector3 dir = horizontalVelocity.sqrMagnitude > 0.01f ? horizontalVelocity.normalized : actor.forward;
-                Vector3 lead = point + dir * FoamLeadOffset;
-                foam.EmitTrail(hasFoamPoint ? lastFoamPoint : lead, lead, curve, step,
-                    FoamRadius.x, FoamRadius.y, FoamRate);
-                lastFoamPoint = lead;
-                hasFoamPoint = true;
-            }
-            else
-            {
-                hasFoamPoint = false;
-            }
+            rippleTimer = 0f;
+            return;
         }
 
-        // Small rings: faster while swimming, rare while treading water.
-        rippleTimer += dt;
-        float rippleInterval = speed01 > 0.15f ? 0.5f : 1.6f;
-        if (!hopAirborne && rippleTimer >= rippleInterval)
+        float speed = horizontalVelocity.magnitude;
+        float speed01 = hopAirborne ? 0f : Mathf.Clamp01(speed / Mathf.Max(0.1f, FoamFullSpeed));
+        if (!UseExternalPlayerFoam)
+        {
+            // NPC swimmers own their own trail. PlayerController enables the external
+            // player-level emitter so swimming and wading share the same tracked trail.
+            foamAccumulator += dt;
+            float emitInterval = 1f / Mathf.Max(5f, FoamEmitHz);
+            if (foamAccumulator >= emitInterval)
+            {
+                float step = foamAccumulator;
+                foamAccumulator = 0f;
+                float curve = hopAirborne ? 0f :
+                    Mathf.Lerp(0.18f, 1f, Smooth01Between(0.04f, 0.82f, speed01)) * waterlineContact;
+                if (curve > 0.001f)
+                {
+                    Vector3 dir = horizontalVelocity.sqrMagnitude > 0.01f ? horizontalVelocity.normalized : actor.forward;
+                    Vector3 lead = point + dir * FoamLeadOffset;
+                    foam.EmitTrail(hasFoamPoint ? lastFoamPoint : lead, lead, curve, step,
+                        FoamRadius.x, FoamRadius.y, FoamRate);
+                    lastFoamPoint = lead;
+                    hasFoamPoint = true;
+                }
+                else
+                {
+                    hasFoamPoint = false;
+                }
+            }
+        }
+        else
+        {
+            hasFoamPoint = false;
+            foamAccumulator = 0f;
+        }
+
+        // NPC swimmers retain a local directional wake here. PlayerController sets
+        // UseExternalPlayerFoam so PlayerWaterContactFoam emits the player's unified
+        // multi-point foam + Kelvin wake for both swimming and wading.
+        if (!UseExternalPlayerFoam && !hopAirborne && speed > 0.35f)
+        {
+            wakeDistanceAccumulator += speed * dt;
+            float spacing = Mathf.Clamp(speed * 0.65f, 1.5f, 3.8f);
+            Vector3 direction = horizontalVelocity.normalized;
+            Vector3 wakePoint = point - direction * Mathf.Max(0.12f, FoamLeadOffset * 0.55f);
+            float wakeRadius = Mathf.Lerp(0.38f, 0.58f, speed01);
+            float wakeStrength = Mathf.Lerp(0.18f, 0.34f, speed01);
+            if (wakeDistanceAccumulator >= spacing)
+            {
+                float overflow = wakeDistanceAccumulator % spacing;
+                wakeDistanceAccumulator = overflow;
+                WaterWakeField.EmitKelvinWake(
+                    wakePoint - direction * overflow,
+                    direction,
+                    wakeRadius,
+                    wakeStrength,
+                    8f,
+                    19.47f,
+                    speed);
+            }
+        }
+        else
+        {
+            wakeDistanceAccumulator = 0f;
+        }
+
+        // Restore visible analytic ripple sources for NPC swimmers. Their circular
+        // packets overlap along the movement path; the shared heightfield remains an
+        // extra vertex-displacement layer, not the only visible wake representation.
+        if (!UseExternalPlayerFoam && EmitFoam && waterlineContact > 0.05f && !hopAirborne)
+        {
+            rippleTimer += dt;
+            if (rippleTimer >= Mathf.Max(0.25f, RippleInterval))
+            {
+                rippleTimer = 0f;
+                float rippleStrength = Mathf.Lerp(0.28f, 0.55f, speed01) * waterlineContact;
+                WaterFoamField.EmitRipple(
+                    point,
+                    0.08f,
+                    Mathf.Lerp(2.2f, 4.0f, speed01),
+                    rippleStrength,
+                    0f,
+                    Mathf.Lerp(2.4f, 3.2f, speed01),
+                    Vector2.zero,
+                    0f,
+                    1.25f);
+            }
+        }
+        else
         {
             rippleTimer = 0f;
-            Vector3 behind = speed01 > 0.15f ? -horizontalVelocity : Vector3.zero;
-            foam.EmitRipple(point, 0.25f, 0.12f + 0.1f * speed01, 0.45f + 0.35f * speed01, behind, 1f, 0f, 0.2f);
         }
+
         if (hopAirborne)
             hasFoamPoint = false;
     }
 
-    private void EmitHopSplash(float intensity)
+    private static float Smooth01Between(float edge0, float edge1, float value)
     {
-        if (!EmitFoam || foam == null)
+        return Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(edge0, edge1, value));
+    }
+
+    private void UpdateWaveAirborneState(float surfaceHeight, Transform actor, float dt)
+    {
+        // A deliberate hop has its own rising/falling animation path.
+        if (hopAirborne || jumpWindupTimer >= 0f)
+        {
+            waveAirborne = false;
+            waveEjectionTimer = 0f;
             return;
+        }
+
+        float bodyCenterY = GetBodyCenterY(actor);
+        if (bodyCenterY > surfaceHeight + WaveEjectionHeight)
+        {
+            waveEjectionTimer += dt;
+            if (waveEjectionTimer >= WaveEjectionConfirmationTime)
+                waveAirborne = true;
+        }
+        else if (bodyCenterY <= surfaceHeight + WaveReentryMargin)
+        {
+            // Use a separate lower threshold to prevent rapid state toggling as
+            // the body skims the waterline during an oscillating wave.
+            waveEjectionTimer = 0f;
+            waveAirborne = false;
+        }
+    }
+
+    private void EmitHopSplash(float intensity, float fallDuration = 0f, bool landing = false)
+    {
+        if (!EmitFoam)
+            return;
+        if (foam == null)
+        {
+            foam = GetComponent<WaterContactFoam>();
+            if (foam == null)
+                foam = gameObject.AddComponent<WaterContactFoam>();
+        }
         Vector3 point = ActorTransform != null ? ActorTransform.position : transform.position;
         point.y = GetCurrentSurfaceHeight(ActorTransform != null ? ActorTransform : transform);
+        if (landing)
+            foam.EmitImpactRipplePair(point, fallDuration, intensity);
+        else
+            foam.EmitRipple(point, 0.3f, 0.2f + 0.3f * intensity, 0.6f + 0.4f * intensity,
+                Vector3.zero, 0f, 0.3f, 0.25f);
         foam.EmitBurst(point, intensity, 0.55f);
-        foam.EmitRipple(point, 0.3f, 0.2f + 0.3f * intensity, 0.6f + 0.4f * intensity, Vector3.zero, 0f, 0.3f, 0.25f);
     }
 
     private void LaunchHop(Vector3 desiredDirection, Transform actor)
     {
         jumpWindupTimer = -1f;
         hopAirborne = true;
-        hopLandedOnGround = false;
+        hopDescendingDuration = 0f;
+        waveAirborne = false;
+        waveEjectionTimer = 0f;
         verticalVelocity = JumpVelocity;
 
         Vector3 direction = desiredDirection;
@@ -591,6 +771,15 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
         verticalVelocity = 0f;
     }
 
+    /// <summary>
+    /// Receives vertical motion when an airborne grounded jump/fall enters the water.
+    /// The buoyancy solver takes over from this initial velocity on its next physics step.
+    /// </summary>
+    public void SetVerticalVelocity(float value)
+    {
+        verticalVelocity = value;
+    }
+
     private Vector3 GetCameraRelativeDirection(Vector2 input, Transform actor)
     {
         Transform reference = ReferenceTransform != null ? ReferenceTransform : actor;
@@ -606,17 +795,56 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
                Time.realtimeSinceStartup - sampledSurfaceTime <= MaximumSurfaceSampleAge;
     }
 
+    private void UpdateFilteredSurfaceTarget(float dt)
+    {
+        if (Ocean == null)
+            return;
+
+        if (!hasSmoothedSurfaceHeight)
+        {
+            smoothedSurfaceHeight = hasSurfaceSample ? sampledSurfaceHeight : Ocean.WaterLevelY;
+            surfaceHeightSmoothVelocity = 0f;
+            filteredSurfaceVerticalVelocity = 0f;
+            hasSmoothedSurfaceHeight = true;
+        }
+
+        float sampleAge = hasSurfaceSample
+            ? Time.realtimeSinceStartup - sampledSurfaceTime
+            : float.PositiveInfinity;
+
+        // Do not jump from a valid displaced wave sample to flat WaterLevelY just
+        // because one asynchronous readback missed its deadline. Hold briefly, then
+        // converge slowly toward the mean level if sampling really stops.
+        float targetHeight = hasSurfaceSample && sampleAge <= SurfaceSampleHoldTime
+            ? sampledSurfaceHeight
+            : Ocean.WaterLevelY;
+
+        smoothedSurfaceHeight = Mathf.SmoothDamp(
+            smoothedSurfaceHeight, targetHeight, ref surfaceHeightSmoothVelocity,
+            SurfaceHeightSmoothTime, MaximumSurfaceFollowSpeed, dt);
+        surfaceHeightSmoothVelocity = Mathf.Clamp(
+            surfaceHeightSmoothVelocity, -MaximumWaveVerticalSpeed, MaximumWaveVerticalSpeed);
+        filteredSurfaceVerticalVelocity = Mathf.Lerp(
+            filteredSurfaceVerticalVelocity, surfaceHeightSmoothVelocity,
+            Mathf.Clamp01(WaveVelocitySmoothing));
+    }
+
     private float GetCurrentSurfaceHeight(Transform actor)
     {
         if (Ocean == null)
             return GetBodyCenterY(actor) - (0.5f - TargetSubmersion) * GetBodyHeight();
 
-        return HasFreshSurfaceSample() ? sampledSurfaceHeight : Ocean.WaterLevelY;
+        return hasSmoothedSurfaceHeight ? smoothedSurfaceHeight
+            : hasSurfaceSample ? sampledSurfaceHeight : Ocean.WaterLevelY;
     }
 
     private float GetCurrentSurfaceVerticalVelocity()
     {
-        return HasFreshSurfaceSample() ? sampledSurfaceVerticalVelocity : 0f;
+        if (!hasSmoothedSurfaceHeight ||
+            (!HasFreshSurfaceSample() && (!hasSurfaceSample ||
+             Time.realtimeSinceStartup - sampledSurfaceTime > SurfaceSampleHoldTime)))
+            return 0f;
+        return filteredSurfaceVerticalVelocity;
     }
 
     private float GetBodyHeight()
@@ -645,43 +873,89 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
             Time.time < nextSampleRequestTime)
             return;
 
+        Transform actor = ActorTransform;
+        if (actor == null)
+            return;
+
         nextSampleRequestTime = Time.time + SurfaceSampleInterval;
         sampleRequestPending = true;
         int generation = sampleGeneration;
-        Vector3 samplePosition = ActorTransform.position;
 
-        bool queued = Ocean.RequestSurfaceSample(samplePosition, sample =>
+        float radius = Controller != null
+            ? Controller.radius * Mathf.Max(Mathf.Abs(Controller.transform.lossyScale.x),
+                Mathf.Abs(Controller.transform.lossyScale.z))
+            : 0.3f;
+        float spread = Mathf.Max(0.08f, radius * SurfaceProbeSpread);
+        Vector3 right = Vector3.ProjectOnPlane(actor.right, Vector3.up).normalized;
+        Vector3 forward = Vector3.ProjectOnPlane(actor.forward, Vector3.up).normalized;
+        if (right.sqrMagnitude < 0.001f) right = Vector3.right;
+        if (forward.sqrMagnitude < 0.001f) forward = Vector3.forward;
+
+        Vector3 center = actor.position;
+        Vector3[] positions =
+        {
+            center,
+            center + right * spread,
+            center - right * spread,
+            center + forward * spread,
+            center - forward * spread
+        };
+
+        bool queued = Ocean.RequestSurfaceSamples(positions, samples =>
         {
             if (generation != sampleGeneration)
                 return;
 
             sampleRequestPending = false;
-            if (!isActiveAndEnabled || !sample.IsValid)
+            if (!isActiveAndEnabled || samples == null || samples.Length == 0)
                 return;
 
-            if (hasSurfaceSample)
+            // The boat's buoyancy uses several hull probes. Use the same principle
+            // for a swimmer: a weighted five-point average tracks the local patch,
+            // while limiting an isolated sharp crest/trough at one probe.
+            bool centerValid = samples.Length > 0 && samples[0].IsValid;
+            float centerHeight = centerValid ? samples[0].Height : 0f;
+            float heightSum = 0f;
+            float latticeX = 0f;
+            float latticeY = 0f;
+            float weightSum = 0f;
+            float sampleTime = 0f;
+
+            for (int i = 0; i < samples.Length && i < 5; i++)
             {
-                float sampleDt = sample.SampleTime - sampledSurfaceTime;
-                if (sampleDt > 0.015f)
-                {
-                    float rawVerticalSpeed = (sample.Height - sampledSurfaceHeight) / sampleDt;
-                    rawVerticalSpeed = Mathf.Clamp(
-                        rawVerticalSpeed, -MaximumWaveVerticalSpeed, MaximumWaveVerticalSpeed);
-                    sampledSurfaceVerticalVelocity = Mathf.Lerp(
-                        sampledSurfaceVerticalVelocity, rawVerticalSpeed, WaveVelocitySmoothing);
-                }
-            }
-            else
-            {
-                sampledSurfaceVerticalVelocity = 0f;
-                hasSurfaceSample = true;
+                SpectralOceanFFT.SurfaceSample sample = samples[i];
+                if (!sample.IsValid || float.IsNaN(sample.Height) || float.IsInfinity(sample.Height))
+                    continue;
+
+                float weight = i == 0 ? 0.4f : 0.15f;
+                float height = sample.Height;
+                if (centerValid && i > 0)
+                    height = Mathf.Clamp(height, centerHeight - MaximumProbeHeightDifference,
+                        centerHeight + MaximumProbeHeightDifference);
+
+                heightSum += height * weight;
+                latticeX += sample.LatticeDisplacementXZ.x * weight;
+                latticeY += sample.LatticeDisplacementXZ.y * weight;
+                weightSum += weight;
+                sampleTime = Mathf.Max(sampleTime, sample.SampleTime);
             }
 
-            sampledLattice = sample.LatticeDisplacementXZ;
-            sampledSurfaceHeight = sample.Height;
-            sampledSurfaceTime = sample.SampleTime > 0f
-                ? sample.SampleTime
-                : Time.realtimeSinceStartup;
+            if (weightSum <= 0.001f)
+                return;
+
+            float averagedHeight = heightSum / weightSum;
+            sampledLattice = new Vector2(latticeX, latticeY) / weightSum;
+            sampledSurfaceHeight = averagedHeight;
+            sampledSurfaceTime = sampleTime > 0f ? sampleTime : Time.realtimeSinceStartup;
+
+            if (!hasSmoothedSurfaceHeight)
+            {
+                smoothedSurfaceHeight = averagedHeight;
+                surfaceHeightSmoothVelocity = 0f;
+                filteredSurfaceVerticalVelocity = 0f;
+                hasSmoothedSurfaceHeight = true;
+            }
+            hasSurfaceSample = true;
         });
 
         if (!queued)
