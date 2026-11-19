@@ -47,7 +47,7 @@ public sealed class PlayerFootPlacementIK : MonoBehaviour
 
         bool shouldApplyIK = player != null &&
                              player.GroundedMovement != null &&
-                             player.ActiveMovement == player.GroundedMovement &&
+                             IsSameMovement(player.ActiveMovement, player.GroundedMovement) &&
                              !player.IsAboardBoat &&
                              player.GroundedMovement.IsGrounded;
 
@@ -56,6 +56,11 @@ public sealed class PlayerFootPlacementIK : MonoBehaviour
 
         ApplyFoot(AvatarIKGoal.LeftFoot);
         ApplyFoot(AvatarIKGoal.RightFoot);
+    }
+
+    private static bool IsSameMovement(Assets._Project.Features.Movement.IMovement current, UnityEngine.Object expected)
+    {
+        return (current as UnityEngine.Object) == expected;
     }
 
     private void ResolveReferences()
