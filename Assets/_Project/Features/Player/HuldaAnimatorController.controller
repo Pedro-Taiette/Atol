@@ -128,7 +128,7 @@ BlendTree:
   m_Name: Ground Direction Blend (Direction)
   m_Childs:
   - serializedVersion: 2
-    m_Motion: {fileID: 7400026, guid: eb079fe91a2874d44aa66e9d05fdc002, type: 3}
+    m_Motion: {fileID: 7400000, guid: fe579683a7c5cbd4da5cadead9dcf88d, type: 2}
     m_Threshold: -1
     m_Position: {x: 0, y: 0}
     m_TimeScale: 1
@@ -136,7 +136,7 @@ BlendTree:
     m_DirectBlendParameter: 
     m_Mirror: 0
   - serializedVersion: 2
-    m_Motion: {fileID: 7400024, guid: eb079fe91a2874d44aa66e9d05fdc002, type: 3}
+    m_Motion: {fileID: 7400000, guid: 79c39bd9acd28d841b1b1e7be65be619, type: 2}
     m_Threshold: 0
     m_Position: {x: 0, y: 0}
     m_TimeScale: 1
@@ -144,7 +144,7 @@ BlendTree:
     m_DirectBlendParameter: 
     m_Mirror: 0
   - serializedVersion: 2
-    m_Motion: {fileID: 7400022, guid: eb079fe91a2874d44aa66e9d05fdc002, type: 3}
+    m_Motion: {fileID: 7400000, guid: 3c9f830a8e55bf64ca9720de299fcfa3, type: 2}
     m_Threshold: 1
     m_Position: {x: 0, y: 0}
     m_TimeScale: 1
@@ -167,7 +167,7 @@ BlendTree:
   m_Name: Grounded Locomotion (Speed + Direction)
   m_Childs:
   - serializedVersion: 2
-    m_Motion: {fileID: 7400020, guid: 0c5e331d38e476248875006c901cdc7f, type: 3}
+    m_Motion: {fileID: 7400000, guid: 304f86aa58191e544894b1173a545a4d, type: 2}
     m_Threshold: 0
     m_Position: {x: 0, y: 0}
     m_TimeScale: 1

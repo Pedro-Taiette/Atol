@@ -5,13 +5,13 @@
   <Project Path="UMA.TexturePaint.Editor.Tests.csproj" />
   <Project Path="UMA.Dismemberment.Runtime.csproj" />
   <Project Path="UMA.TexturePaint.Tests.csproj" />
+  <Project Path="Assembly-CSharp.csproj" />
   <Project Path="UMA3.Samples.csproj" />
   <Project Path="UMA.TexturePaint.Editor.csproj" />
   <Project Path="UMA.TexturePaint.Runtime.csproj" />
   <Project Path="_Project.Framework.csproj" />
   <Project Path="UMA_Core_Editor_Tests.csproj" />
   <Project Path="UMA_Editor.csproj" />
-  <Project Path="Assembly-CSharp.csproj" />
   <Project Path="UMA.Dismemberment.Editor.csproj" />
   <Project Path="UMA.TexturePaint.Examples.csproj" />
   <Project Path="UMA_Utilities_Editor.csproj" />
