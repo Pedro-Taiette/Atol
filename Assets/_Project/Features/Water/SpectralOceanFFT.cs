@@ -14,7 +14,7 @@ using UnityEngine.Rendering;
 /// </summary>
 [DisallowMultipleComponent]
 [RequireComponent(typeof(MeshRenderer))]
-public sealed class SpectralOceanFFT : MonoBehaviour
+public class SpectralOceanFFT : MonoBehaviour
 {
     /// <summary>Cached shader property IDs (avoids per-call string hashing).</summary>
     private static class PropID
@@ -162,7 +162,7 @@ public sealed class SpectralOceanFFT : MonoBehaviour
     }
 
     [Serializable]
-    private sealed class CascadeSettings
+    public class CascadeSettings
     {
         [Min(1f)] public float patchLength = 2048f;
         [Min(0.1f)] public float minWavelength = 24f;
@@ -324,7 +324,7 @@ public sealed class SpectralOceanFFT : MonoBehaviour
 
     [Header("Frequency Cascades")]
     [Tooltip("Keep exactly three cascades. Large and medium bands displace geometry; the small band adds normals and foam.")]
-    [SerializeField] private CascadeSettings[] cascades =
+    public CascadeSettings[] cascades =
     {
         new CascadeSettings { patchLength = 2048f, minWavelength = 24f,  maxWavelength = 1800f, amplitudeScale = 1.7f },
         new CascadeSettings { patchLength = 512f,  minWavelength = 8f,   maxWavelength = 100f,  amplitudeScale = 2.0f },
@@ -944,6 +944,36 @@ public sealed class SpectralOceanFFT : MonoBehaviour
             for (int i = 0; i < slices.Count; i++)
                 InvokeInvalidSurfaceQuery(slices[i].query.callback, slices[i].query.positions.Length);
         }
+    }
+    public float[] GetCascadeAmplitudeScales()
+    {
+        float[] result = new float[cascades.Length];
+
+        for (int i = 0; i < cascades.Length; i++)
+            result[i] = cascades[i].amplitudeScale;
+
+        return result;
+    }
+
+    public void SetCascadeAmplitudeScales(float[] values)
+    {
+        if (values == null || values.Length != cascades.Length)
+        {
+            Debug.LogError("Invalid cascade amplitude configuration.");
+            return;
+        }
+
+        for (int i = 0; i < cascades.Length; i++)
+        {
+            // Modify the existing object. Do not replace it.
+            cascades[i].amplitudeScale = Mathf.Max(0f, values[i]);
+        }
+
+        // Regenerate the spectrum with the new settings.
+        spectrumDirty = true;
+
+        spectrumSettingsHash = ComputeSpectrumSettingsHash();
+        hasSpectrumSettingsHash = true;
     }
 
     private void BindSurfaceQueryParameters(SurfaceQuerySlot slot, int sampleCount)
