@@ -685,6 +685,12 @@ Shader "Custom/Wave"
                     shoreFoamArea = 0.0;
                 }
 
+                // Keep this mapping in lockstep with OceanFFT.compute::SampleDisp0/1.
+                // With LOD 0 bilinear sampling, (worldXZ / patchLength + 0.5 / N)
+                // maps to texel coordinates frac(worldXZ / patchLength) * N.
+                // The compute sampler uses that exact texel coordinate for Load()
+                // interpolation, so physics samples the same displacement field as
+                // the rendered vertex shader, including negative world coordinates.
                 float2 texelCenterOffset = _OceanHalfTexel.xx;
                 float2 uv0 = basePositionWS.xz / max(_OceanPatchLength0, 1.0) + texelCenterOffset;
                 float2 uv1 = basePositionWS.xz / max(_OceanPatchLength1, 1.0) + texelCenterOffset;

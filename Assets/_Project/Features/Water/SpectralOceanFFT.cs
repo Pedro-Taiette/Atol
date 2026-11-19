@@ -14,7 +14,7 @@ using UnityEngine.Rendering;
 /// </summary>
 [DisallowMultipleComponent]
 [RequireComponent(typeof(MeshRenderer))]
-public class SpectralOceanFFT : MonoBehaviour
+public sealed class SpectralOceanFFT : MonoBehaviour
 {
     /// <summary>Cached shader property IDs (avoids per-call string hashing).</summary>
     private static class PropID
@@ -94,8 +94,9 @@ public class SpectralOceanFFT : MonoBehaviour
 
 
     /// <summary>
-    /// Asynchronously sampled position on the animated FFT surface. Position is
-    /// the displaced world position corresponding to BasePosition.xz.
+    /// Asynchronously sampled water height at the requested world XZ. Position.xz
+    /// intentionally remains equal to BasePosition.xz; horizontal particle motion
+    /// is reported separately by LatticeDisplacementXZ.
     /// </summary>
     public struct SurfaceSample
     {
@@ -106,6 +107,8 @@ public class SpectralOceanFFT : MonoBehaviour
         public float SampleTime;
         /// <summary>Horizontal (Gerstner-style) displacement of the water particle under this point. Zero-mean over a wave cycle.</summary>
         public Vector2 LatticeDisplacementXZ;
+        /// <summary>Horizontal inverse-map residual in metres; useful for validating high-choppiness queries.</summary>
+        public float HorizontalQueryErrorMeters;
         public float Height => Position.y;
     }
 
@@ -162,7 +165,7 @@ public class SpectralOceanFFT : MonoBehaviour
     }
 
     [Serializable]
-    public class CascadeSettings
+    private sealed class CascadeSettings
     {
         [Min(1f)] public float patchLength = 2048f;
         [Min(0.1f)] public float minWavelength = 24f;
@@ -324,7 +327,7 @@ public class SpectralOceanFFT : MonoBehaviour
 
     [Header("Frequency Cascades")]
     [Tooltip("Keep exactly three cascades. Large and medium bands displace geometry; the small band adds normals and foam.")]
-    public CascadeSettings[] cascades =
+    [SerializeField] private CascadeSettings[] cascades =
     {
         new CascadeSettings { patchLength = 2048f, minWavelength = 24f,  maxWavelength = 1800f, amplitudeScale = 1.7f },
         new CascadeSettings { patchLength = 512f,  minWavelength = 8f,   maxWavelength = 100f,  amplitudeScale = 2.0f },
@@ -975,7 +978,6 @@ public class SpectralOceanFFT : MonoBehaviour
         spectrumSettingsHash = ComputeSpectrumSettingsHash();
         hasSpectrumSettingsHash = true;
     }
-
     private void BindSurfaceQueryParameters(SurfaceQuerySlot slot, int sampleCount)
     {
         oceanCompute.SetInt(PropID.SampleResolution, resolution);
@@ -1064,7 +1066,8 @@ public class SpectralOceanFFT : MonoBehaviour
 
                     GpuSurfaceQueryResult gpu = results[resultIndex];
                     bool valid = gpu.displacement.w > 0.5f &&
-                        IsFinite(gpu.displacement) && IsFinite(gpu.normal);
+                        IsFinite(gpu.displacement) && IsFinite(gpu.normal) &&
+                        IsFinite(gpu.lattice) && gpu.lattice.z <= 0.25f;
                     Vector3 basePosition = slice.query.positions[i];
                     Vector3 displacement = valid
                         ? new Vector3(gpu.displacement.x, gpu.displacement.y, gpu.displacement.z)
@@ -1077,15 +1080,18 @@ public class SpectralOceanFFT : MonoBehaviour
                     {
                         BasePosition = basePosition,
                         Position = new Vector3(
-                            basePosition.x + displacement.x,
+                            basePosition.x,
                             slice.waterLevelY + displacement.y,
-                            basePosition.z + displacement.z),
+                            basePosition.z),
                         Normal = normal,
                         IsValid = valid,
                         SampleTime = slice.sampleTime,
                         LatticeDisplacementXZ = valid && IsFinite(gpu.lattice)
                             ? new Vector2(gpu.lattice.x, gpu.lattice.y)
-                            : Vector2.zero
+                            : Vector2.zero,
+                        HorizontalQueryErrorMeters = valid && IsFinite(gpu.lattice.z)
+                            ? gpu.lattice.z
+                            : float.PositiveInfinity
                     };
                 }
 
@@ -1127,7 +1133,8 @@ public class SpectralOceanFFT : MonoBehaviour
             Position = new Vector3(basePosition.x, waterLevel, basePosition.z),
             Normal = Vector3.up,
             IsValid = false,
-            SampleTime = sampleTime
+            SampleTime = sampleTime,
+            HorizontalQueryErrorMeters = float.PositiveInfinity
         };
     }
 

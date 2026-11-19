@@ -300,9 +300,13 @@ MonoBehaviour:
   JumpWindupDip: 0.2
   JumpMaxDepthError: 0.45
   JumpLandingGrace: 0.5
-  SurfaceSampleInterval: 0.1
-  MaximumSurfaceSampleAge: 0.45
+  SurfaceSampleInterval: 0.05
+  MaximumSurfaceSampleAge: 0.35
   WaveVelocitySmoothing: 0.3
+  MaximumSurfaceQueryError: 0.25
+  MaximumSurfaceSampleSlope: 8
+  MaximumSurfaceHeightCorrection: 5
+  MaximumSurfaceQueryDrift: 5
   SurfaceHeightSmoothTime: 0.16
   MaximumSurfaceFollowSpeed: 2
   SurfaceSampleHoldTime: 0.9

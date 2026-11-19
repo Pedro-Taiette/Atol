@@ -48,7 +48,7 @@ struct SurfaceQueryResult
 {
     float4 displacement; // xyz = world displacement, w = valid
     float4 normal;       // xyz = world normal, w = valid
-    float4 lattice;      // xy = horizontal displacement of the water particle under the query (v8), zw = unused
+    float4 lattice;      // xy = particle displacement, z = horizontal inverse-map error (m), w = reserved
 };
 RWStructuredBuffer<SurfaceQueryResult> _SurfaceQueryResults;
 
@@ -824,20 +824,22 @@ bool RefineSurfaceParameter(
     float2 seed,
     out float3 bestDisplacement,
     out float3 bestNormal,
-    out float2 bestResidual,
     out float bestResidualSqr)
 {
     float2 param = seed;
     bestDisplacement = 0.0;
     bestNormal = float3(0.0, 1.0, 0.0);
-    bestResidual = float2(1e6, 1e6);
     bestResidualSqr = 1e12;
 
-    float epsilon = max(0.15,
-        min(_SamplePatchLength0, _SamplePatchLength1) / max((float)_SampleResolution, 1.0) * 0.5);
+    // The derivative step should be related to the actual displacement-map
+    // texel size, but not so large that it crosses an entire short wave crest.
+    float epsilon = clamp(
+        min(_SamplePatchLength0, _SamplePatchLength1)
+            / max((float)_SampleResolution, 1.0) * 0.5,
+        0.2, 1.25);
 
     [loop]
-    for (int iteration = 0; iteration < 6; ++iteration)
+    for (int iteration = 0; iteration < 10; ++iteration)
     {
         float3 displacement;
         float3 normal;
@@ -847,16 +849,16 @@ bool RefineSurfaceParameter(
         float2 mapped = param + displacement.xz;
         float2 residual = targetWorldXZ - mapped;
         float residualSqr = dot(residual, residual);
+
         if (all(isfinite(residual)) && residualSqr < bestResidualSqr &&
             all(isfinite(displacement)) && all(isfinite(normal)))
         {
             bestDisplacement = displacement;
             bestNormal = normal;
-            bestResidual = -residual;
             bestResidualSqr = residualSqr;
         }
 
-        if (residualSqr < 0.0004)
+        if (residualSqr < 0.0001)
             break;
 
         float3 displacementX;
@@ -868,10 +870,7 @@ bool RefineSurfaceParameter(
         bool validZ = EvaluateSurfaceAtParamXZ(
             param + float2(0.0, epsilon), displacementZ, normalZ);
         if (!validX || !validZ)
-        {
-            param += clamp(residual * 0.55, float2(-24.0, -24.0), float2(24.0, 24.0));
-            continue;
-        }
+            break;
 
         float2 mappedX = param + float2(epsilon, 0.0) + displacementX.xz;
         float2 mappedZ = param + float2(0.0, epsilon) + displacementZ.xz;
@@ -882,23 +881,58 @@ bool RefineSurfaceParameter(
         float determinant = j00 * j11 - j01 * j10;
 
         float2 step;
-        if (isfinite(determinant) && abs(determinant) > 0.035)
+        if (isfinite(determinant) && abs(determinant) > 0.025)
         {
-            step.x = ( residual.x * j11 - j01 * residual.y) / determinant;
-            step.y = ( j00 * residual.y - residual.x * j10) / determinant;
+            step.x = (residual.x * j11 - j01 * residual.y) / determinant;
+            step.y = (j00 * residual.y - residual.x * j10) / determinant;
             if (!all(isfinite(step)))
-                step = residual * 0.55;
+                step = residual * 0.35;
         }
         else
         {
-            // Near a folded/non-invertible patch, fall back to a conservative
-            // fixed-point step rather than amplifying the nearly singular inverse.
-            step = residual * 0.55;
+            // Near a folded wave the inverse Jacobian becomes ill-conditioned.
+            // Fall back to a small fixed-point correction instead of allowing a
+            // large Newton jump to land on a neighbouring crest/trough.
+            step = residual * 0.35;
         }
 
-        float maxStep = max(24.0, length(displacement.xz) * 1.75 + 4.0);
-        step = clamp(step, float2(-maxStep, -maxStep), float2(maxStep, maxStep));
-        param += step * 0.72;
+        // A Newton step is never allowed to jump tens of metres. Keep it within
+        // the local wave patch and use a backtracking line search to guarantee
+        // that each accepted step reduces the world-space mapping error.
+        float maxStep = clamp(
+            max(epsilon * 1.5, length(displacement.xz) * 0.75 + 0.35),
+            0.35, 2.5);
+        float stepLength = length(step);
+        if (stepLength > maxStep)
+            step *= maxStep / max(stepLength, 1e-5);
+
+        bool accepted = false;
+        float stepScale = 1.0;
+        [unroll]
+        for (int lineSearch = 0; lineSearch < 5; ++lineSearch)
+        {
+            float2 candidateParam = param + step * stepScale;
+            float3 candidateDisplacement;
+            float3 candidateNormal;
+            if (EvaluateSurfaceAtParamXZ(
+                candidateParam, candidateDisplacement, candidateNormal))
+            {
+                float2 candidateMapped = candidateParam + candidateDisplacement.xz;
+                float2 candidateResidual = targetWorldXZ - candidateMapped;
+                float candidateResidualSqr = dot(candidateResidual, candidateResidual);
+                if (isfinite(candidateResidualSqr) &&
+                    candidateResidualSqr < residualSqr - 1e-7)
+                {
+                    param = candidateParam;
+                    accepted = true;
+                    break;
+                }
+            }
+            stepScale *= 0.5;
+        }
+
+        if (!accepted)
+            break;
     }
 
     return bestResidualSqr < 1e11;
@@ -917,26 +951,28 @@ void SampleSurface(uint3 id : SV_DispatchThreadID)
     bool initialValid = EvaluateSurfaceAtParamXZ(
         targetWorldXZ, initialDisplacement, initialNormal);
 
-    float2 seeds[2];
+    // Start from the undeformed point, one fixed-point estimate, and a halfway
+    // estimate. The additional seed helps at moderate/high choppiness without
+    // allowing a solver to jump to a distant wave crest.
+    float2 seeds[3];
     seeds[0] = targetWorldXZ;
     seeds[1] = initialValid ? targetWorldXZ - initialDisplacement.xz : targetWorldXZ;
+    seeds[2] = initialValid ? targetWorldXZ - initialDisplacement.xz * 0.5 : targetWorldXZ;
 
     float3 bestDisplacement = 0.0;
     float3 bestNormal = float3(0.0, 1.0, 0.0);
-    float2 bestResidual = float2(1e6, 1e6);
     float bestResidualSqr = 1e12;
 
     [unroll]
-    for (int seedIndex = 0; seedIndex < 2; ++seedIndex)
+    for (int seedIndex = 0; seedIndex < 3; ++seedIndex)
     {
         float3 candidateDisplacement;
         float3 candidateNormal;
-        float2 candidateResidual;
         float candidateResidualSqr;
         if (RefineSurfaceParameter(
             targetWorldXZ, seeds[seedIndex],
             candidateDisplacement, candidateNormal,
-            candidateResidual, candidateResidualSqr))
+            candidateResidualSqr))
         {
             // Prefer the smallest world-space horizontal error. When two sheets
             // map almost identically at a folded crest, select the higher surface;
@@ -948,17 +984,16 @@ void SampleSurface(uint3 id : SV_DispatchThreadID)
             {
                 bestDisplacement = candidateDisplacement;
                 bestNormal = candidateNormal;
-                bestResidual = candidateResidual;
                 bestResidualSqr = candidateResidualSqr;
             }
         }
     }
 
-    // Preserve the true mapped XZ residual. The former fallback sampled the
-    // parametric point at target XZ and then forced its residual to zero. At high
-    // wind this falsely claimed that a displaced crest was directly under the
-    // camera/hull, which made every water consumer disagree with the rendered top.
-    bool valid = bestResidualSqr <= 2.25 &&
+    // A 1.5 m acceptance radius is too permissive: at medium wind it can select
+    // a neighbouring crest or trough and report that height under the swimmer.
+    // The bilinear displacement maps are continuous, so a successful inverse
+    // should converge close to the requested world XZ.
+    bool valid = bestResidualSqr <= 0.0625 &&
         all(isfinite(bestDisplacement)) && all(isfinite(bestNormal)) &&
         dot(bestNormal, bestNormal) > 1e-6;
 
@@ -966,15 +1001,19 @@ void SampleSurface(uint3 id : SV_DispatchThreadID)
     {
         bestDisplacement = 0.0;
         bestNormal = float3(0.0, 1.0, 0.0);
-        bestResidual = 0.0;
     }
 
     SurfaceQueryResult result;
-    result.displacement = float4(bestResidual.x, bestDisplacement.y, bestResidual.y,
+    // Position is the water surface height at the requested world XZ. Do not put
+    // the inverse-solver residual in displacement.xz: that residual is a numerical
+    // error diagnostic, not a world-space displacement of the query point.
+    result.displacement = float4(0.0, valid ? bestDisplacement.y : 0.0, 0.0,
         valid ? 1.0 : 0.0);
     result.normal = float4(bestNormal, valid ? 1.0 : 0.0);
-    // The water particle (lattice point) currently under the query XZ and how far the
-    // waves have carried it horizontally. Zero-mean over a wave cycle: boats use it to orbit.
-    result.lattice = float4(valid ? bestDisplacement.xz : float2(0.0, 0.0), 0.0, 0.0);
+    // xy = horizontal water-particle displacement (for drift); z = inverse-map
+    // residual in metres (for diagnostics); w remains reserved.
+    result.lattice = float4(
+        valid ? bestDisplacement.xz : float2(0.0, 0.0),
+        valid ? sqrt(bestResidualSqr) : 1e6, 0.0);
     _SurfaceQueryResults[index] = result;
 }

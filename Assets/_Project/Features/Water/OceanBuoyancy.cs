@@ -397,30 +397,8 @@ public sealed class OceanBuoyancy : MonoBehaviour
     private bool TryGetWaterHeightAtProbe(
         SpectralOceanFFT.SurfaceSample sample, Vector3 probeWorld, out float waterHeight)
     {
-        waterHeight = sample.Height;
-        if (!sample.IsValid || !IsFinite(sample.Height) || !IsFinite(sample.Normal.x) ||
-            !IsFinite(sample.Normal.y) || !IsFinite(sample.Normal.z))
-            return false;
-
-        Vector3 normal = sample.Normal.sqrMagnitude > 0.001f
-            ? sample.Normal.normalized
-            : Vector3.up;
-        if (normal.y < 0f)
-            normal = -normal;
-
-        float normalY = Mathf.Max(normal.y, 0.12f);
-        Vector2 delta = new Vector2(
-            probeWorld.x - sample.Position.x,
-            probeWorld.z - sample.Position.z);
-        Vector2 slope = new Vector2(-normal.x / normalY, -normal.z / normalY);
-        slope = Vector2.ClampMagnitude(slope, maximumSampleSlope);
-
-        float correction = Mathf.Clamp(
-            Vector2.Dot(slope, delta),
-            -maximumSlopeHeightCorrection,
-            maximumSlopeHeightCorrection);
-        waterHeight = sample.Height + correction;
-        return IsFinite(waterHeight);
+        return WaterSurfaceSampleUtility.TryGetHeightAtWorldPosition(
+            sample, probeWorld, maximumSampleSlope, maximumSlopeHeightCorrection, out waterHeight);
     }
 
     /// <summary>Number of buoyancy probes.</summary>
@@ -514,10 +492,13 @@ public sealed class OceanBuoyancy : MonoBehaviour
             normalSum += samples[i].Normal;
             heightSum += samples[i].Height;
             latticeSum += samples[i].LatticeDisplacementXZ;
+            // SurfaceSample.Position is now the exact queried world XZ, not the
+            // closest displaced mesh vertex. Horizontal particle motion is carried
+            // separately in LatticeDisplacementXZ and must be used for wave velocity.
             waveDisplacementSum += new Vector3(
-                samples[i].Position.x - samples[i].BasePosition.x,
+                samples[i].LatticeDisplacementXZ.x,
                 samples[i].Position.y - meanWaterLevel,
-                samples[i].Position.z - samples[i].BasePosition.z);
+                samples[i].LatticeDisplacementXZ.y);
             latestSampleTime = Mathf.Max(latestSampleTime, samples[i].SampleTime);
             validCount++;
         }
