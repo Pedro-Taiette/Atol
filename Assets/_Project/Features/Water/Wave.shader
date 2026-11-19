@@ -146,6 +146,13 @@ Shader "Custom/Wave"
             SAMPLER(sampler_WaterFoamField);
             float4 _WaterFoamFieldParams;
 
+            // Local moving-object wake heightfield. RG = (height, vertical velocity);
+            // the feedback solver is maintained by WaterWakeField in a ping-pong RT pair.
+            TEXTURE2D(_WaterWakeField);
+            SAMPLER(sampler_WaterWakeField);
+            float4 _WaterWakeFieldParams; // xy = world min XZ, z = inverse world size, w = inverse resolution
+            float _WaterWakeFieldEnabled;
+
             CBUFFER_START(UnityPerMaterial)
                 half4 _BaseColor;
                 float4 _BaseMap_ST;
@@ -286,8 +293,15 @@ Shader "Custom/Wave"
             #define MAX_WATER_RIPPLES 32
             float4 _WaterRippleDataA[MAX_WATER_RIPPLES]; // xy = centre XZ, z = start time, w = start radius
             float4 _WaterRippleDataB[MAX_WATER_RIPPLES]; // x = max radius, y = strength, z = foam amount, w = lifetime
-            float4 _WaterRippleDataC[MAX_WATER_RIPPLES]; // xy = facing direction XZ, z = arc (0 full circle, 1 half circle)
+            float4 _WaterRippleDataC[MAX_WATER_RIPPLES]; // xy = facing XZ, z = arc, w = crest width multiplier
             float4 _WaterRippleParams;               // x = count, y = current time
+
+            #define MAX_WATER_KELVIN_WAKES 16
+            float4 _WaterKelvinDataA[MAX_WATER_KELVIN_WAKES]; // xy = stern XZ, z = start time, w = length
+            float4 _WaterKelvinDataB[MAX_WATER_KELVIN_WAKES]; // x = strength, y = lifetime, z = arm width, w = transverse wavelength
+            float4 _WaterKelvinDataC[MAX_WATER_KELVIN_WAKES]; // xy = travel direction, z = tan(half angle)
+            float4 _WaterKelvinDataD[MAX_WATER_KELVIN_WAKES]; // x = forward speed (m/s)
+            float4 _WaterKelvinParams; // x = count, y = current time
 
             void EvaluateRipples(float2 p, out float2 slope, out float tint, out float foamBits)
             {
@@ -315,41 +329,155 @@ Shader "Custom/Wave"
                     float u = age / life;
                     float2 d = p - a.xy;
                     float r = length(d);
-                    if (r > b.x * 1.15)
-                        continue;
 
-                    // Ring radius decelerates as it spreads.
+                    // Ring radius decelerates as it spreads. The packet width grows
+                    // with age and can be expanded per ripple for a soft secondary wake.
                     float ringRadius = lerp(a.w, b.x, 1.0 - pow(1.0 - u, 1.7));
-                    float width = lerp(0.2, 0.6, u) * max(1.0, b.x * 0.06);
-                    float x = (r - ringRadius) / width;
-                    if (abs(x) > 3.0)
+                    float widthScale = max(_WaterRippleDataC[k].w, 0.35);
+                    float width = lerp(0.2, 0.6, u) * max(1.0, b.x * 0.06) * widthScale;
+                    float x = (r - ringRadius) / max(width, 0.025);
+                    float ax = abs(x);
+                    // A Gaussian packet has no visible hard edge. Only skip fragments
+                    // after its energy is below float precision for this effect, so a
+                    // ripple cannot look like a planar decal with a clipped boundary.
+                    if (ax > 8.5)
                         continue;
 
                     float2 dir = d / max(r, 1e-3);
 
-                    // Half-circle ripples (moving objects) only exist on the facing side.
+                    // Moving-object ripples are attenuated on the rear hemisphere.
                     float side = dot(dir, _WaterRippleDataC[k].xy);
                     float arcMask = lerp(1.0, smoothstep(-0.25, 0.35, side), _WaterRippleDataC[k].z);
                     if (arcMask <= 0.001)
                         continue;
 
-                    // Short wave packet: ~3 crests under a soft envelope.
+                    // A Gaussian wave packet approximates the closed-form circular
+                    // ripple solutions: radial spreading, a dispersive crest packet,
+                    // and damping. Wider packets use fewer oscillations and read as blur.
+                    float phaseFrequency = lerp(3.6, 1.65, saturate((widthScale - 1.0) / 4.5));
                     float envelope = exp(-0.5 * x * x);
-                    float phase = x * 3.6;
-                    float h = cos(phase) * envelope;
-                    float dhdr = (-sin(phase) * 3.6 * envelope - x * h) / width;
+                    float carrier = cos(x * phaseFrequency);
+                    float h = carrier * envelope;
 
-                    // Visible for the whole life, fading smoothly to nothing; thins as it spreads.
-                    float fade = (1.0 - u) * (1.0 - u * u) * b.y * arcMask
-                               * rsqrt(max(r / max(a.w, 0.1), 1.0));
+                    // Exact radial derivative of the Gaussian-modulated carrier. There
+                    // is no extra rectangular support mask, so both height/tint and
+                    // normal response decay continuously into the surrounding ocean.
+                    float dhdx = (-sin(x * phaseFrequency) * phaseFrequency * envelope
+                                  - x * carrier * envelope);
+                    float dhdr = dhdx / max(width, 0.025);
 
-                    slope += dir * dhdr * fade * 0.06 * (1.0 + 0.04 * b.x);
+                    // A continuous radial/temporal energy envelope. Energy converges
+                    // smoothly to zero as the packet reaches its lifetime limit.
+                    float radialDamping = rsqrt(max(r / max(a.w, 0.1), 1.0));
+                    float temporalDamping = (1.0 - u) * (1.0 - u) * (1.0 - u * u);
+                    float fade = temporalDamping * b.y * arcMask * radialDamping;
+
+                    slope += dir * dhdr * fade * 0.06 * (1.0 + 0.025 * b.x);
                     tint += abs(h) * fade;
 
-                    // Rare small flecks, only on strong crests of big, fresh ripples.
+                    // Small foam flecks are reserved for the sharp, strong leading crest.
                     float crest = saturate(h);
                     foamBits = max(foamBits,
                         smoothstep(0.82, 0.98, crest * (0.55 + lace * 0.9)) * b.z * saturate(fade * 1.5));
+                }
+            }
+
+            void EvaluateKelvinWakes(float2 p, out float2 slope, out float tint)
+            {
+                slope = 0.0;
+                tint = 0.0;
+                int count = (int)_WaterKelvinParams.x;
+                if (count <= 0)
+                    return;
+
+                float now = _WaterKelvinParams.y;
+                [loop]
+                for (int k = 0; k < count; k++)
+                {
+                    float4 a = _WaterKelvinDataA[k];
+                    float4 b = _WaterKelvinDataB[k];
+                    float4 c = _WaterKelvinDataC[k];
+                    float4 d = _WaterKelvinDataD[k];
+                    float age = now - a.z;
+                    float life = max(b.y, 0.1);
+                    if (age < 0.0 || age > life)
+                        continue;
+
+                    float2 travel = normalize(c.xy);
+                    float2 aft = -travel;
+                    float2 side = float2(-travel.y, travel.x);
+
+                    // The wake apex is advected forward with the moving hull/player.
+                    // Its trailing V starts short and grows backward over the packet's life.
+                    float forwardSpeed = clamp(d.x, 0.0, 30.0);
+                    float2 movingApex = a.xy + travel * (forwardSpeed * age);
+                    float2 delta = p - movingApex;
+                    float back = dot(delta, aft);
+                    if (back < -0.35)
+                        continue;
+
+                    float growthSpeed = max(2.0, forwardSpeed * 1.15 + 0.7);
+                    float activeLength = min(a.w, age * growthSpeed);
+                    if (activeLength < 0.08)
+                        continue;
+
+                    float frontWidth = max(0.38, b.z * 1.8 + activeLength * 0.025);
+                    if (back > activeLength + frontWidth * 2.5)
+                        continue;
+
+                    float lateral = dot(delta, side);
+                    float tanAngle = max(c.z, 0.08);
+                    float armOffset = max(back, 0.0) * tanAngle;
+                    float armWidth = max(0.14, b.z + max(back, 0.0) * 0.014);
+                    float invWidth2 = 1.0 / max(armWidth * armWidth, 0.02);
+                    float leftDistance = lateral - armOffset;
+                    float rightDistance = lateral + armOffset;
+                    float leftArm = exp(-0.5 * leftDistance * leftDistance * invWidth2);
+                    float rightArm = exp(-0.5 * rightDistance * rightDistance * invWidth2);
+                    float arms = leftArm + rightArm;
+
+                    float along = saturate(back / max(activeLength, 0.08));
+                    float life01 = saturate(age / life);
+                    float originFade = smoothstep(0.0, 0.10, along);
+                    float frontFade = 1.0 - smoothstep(activeLength, activeLength + frontWidth * 2.5, back);
+                    float temporalFade = exp(-0.42 * life01)
+                                       * (1.0 - smoothstep(0.84, 1.0, life01));
+                    float fade = originFade * frontFade * temporalFade * b.x;
+                    if (fade < 0.0005)
+                        continue;
+
+                    // A phase travelling down the arms gives the expanding envelope
+                    // visible moving crests, rather than a static V-shaped decal.
+                    float wavelength = max(b.w, 0.5);
+                    float phase = 6.2831853 * (back / wavelength - age * 0.72);
+                    float carrier = cos(phase);
+                    float dCarrierBack = -0.72 * sin(phase) * 6.2831853 / wavelength;
+                    float dArmsLateral = -(leftDistance * leftArm + rightDistance * rightArm) * invWidth2;
+                    float dArmsBack = (leftDistance * leftArm - rightDistance * rightArm)
+                                      * tanAngle * invWidth2;
+                    float dHeightLateral = dArmsLateral * carrier;
+                    float dHeightBack = dArmsBack * carrier + arms * dCarrierBack;
+
+                    // A moving soft crest at the expanding rear boundary makes the
+                    // V visibly grow from a small wake into a long trailing pattern.
+                    float frontDistance = (back - activeLength) / max(frontWidth, 0.1);
+                    float frontCrest = exp(-0.5 * frontDistance * frontDistance);
+                    float frontEnergy = frontCrest * arms * 0.32;
+
+                    // Weak transverse crests fill the interior without turning the
+                    // movement wake into a circular ripple.
+                    float transverseWidth = max(0.3, armOffset * 0.82 + 0.22);
+                    float transverse = exp(-0.5 * lateral * lateral /
+                                           (transverseWidth * transverseWidth));
+                    float transverseCarrier = cos(phase * 0.72 + 1.1);
+                    float transverseEnergy = 0.13 * transverse * transverseCarrier;
+                    float dTransverseLat = -lateral / (transverseWidth * transverseWidth)
+                                           * 0.13 * transverse * transverseCarrier;
+                    float wakeHeight = arms * carrier + frontEnergy + transverseEnergy;
+
+                    slope += (side * (dHeightLateral + dTransverseLat)
+                            + aft * (dHeightBack + arms * dCarrierBack)) * fade * 0.30;
+                    tint += abs(wakeHeight) * fade * 0.58;
                 }
             }
 
@@ -637,6 +765,25 @@ Shader "Custom/Wave"
                     displacementWS = 0.0;
 
                 float3 displacedPositionWS = basePositionWS + displacementWS;
+
+                // Add the simulated wake as real local vertex height displacement.
+                // A two-texel edge fade keeps the camera-following RT border invisible.
+                if (_WaterWakeFieldEnabled > 0.5)
+                {
+                    float2 wakeUV = (basePositionWS.xz - _WaterWakeFieldParams.xy)
+                                    * _WaterWakeFieldParams.z;
+                    float wakeTexel = max(_WaterWakeFieldParams.w, 1e-5);
+                    float2 edgeIn = smoothstep(0.0, wakeTexel * 2.0, wakeUV);
+                    float2 edgeOut = 1.0 - smoothstep(1.0 - wakeTexel * 2.0, 1.0, wakeUV);
+                    float wakeInside = saturate(edgeIn.x * edgeIn.y * edgeOut.x * edgeOut.y);
+                    if (wakeInside > 0.001)
+                    {
+                        float wakeHeight = SAMPLE_TEXTURE2D_LOD(
+                            _WaterWakeField, sampler_WaterWakeField, saturate(wakeUV), 0).r;
+                        displacedPositionWS.y += clamp(wakeHeight, -0.4, 0.4) * wakeInside;
+                    }
+                }
+
                 if (!all(isfinite(displacedPositionWS)) ||
                     any(abs(displacedPositionWS) > 1e7))
                     displacedPositionWS = basePositionWS;
@@ -745,6 +892,38 @@ Shader "Custom/Wave"
                 float rippleFoam;
                 EvaluateRipples(IN.positionWS.xz, rippleSlope, rippleTint, rippleFoam);
                 combinedSlope += rippleSlope;
+
+                float2 kelvinSlope;
+                float kelvinTint;
+                EvaluateKelvinWakes(IN.positionWS.xz, kelvinSlope, kelvinTint);
+                combinedSlope += kelvinSlope;
+                rippleTint += kelvinTint;
+
+                // Use the local heightfield gradient to shade the circular fronts even
+                // on areas where the water mesh is too coarse to resolve every texel.
+                if (_WaterWakeFieldEnabled > 0.5)
+                {
+                    float2 wakeUV = (IN.baseWorldXZ - _WaterWakeFieldParams.xy)
+                                    * _WaterWakeFieldParams.z;
+                    float wakeTexelUV = max(_WaterWakeFieldParams.w, 1e-5);
+                    float2 edgeIn = smoothstep(0.0, wakeTexelUV * 2.0, wakeUV);
+                    float2 edgeOut = 1.0 - smoothstep(1.0 - wakeTexelUV * 2.0, 1.0, wakeUV);
+                    float wakeInside = saturate(edgeIn.x * edgeIn.y * edgeOut.x * edgeOut.y);
+                    if (wakeInside > 0.001)
+                    {
+                        float2 texel = float2(wakeTexelUV, wakeTexelUV);
+                        float hL = SAMPLE_TEXTURE2D(_WaterWakeField, sampler_WaterWakeField, saturate(wakeUV - float2(texel.x, 0.0))).r;
+                        float hR = SAMPLE_TEXTURE2D(_WaterWakeField, sampler_WaterWakeField, saturate(wakeUV + float2(texel.x, 0.0))).r;
+                        float hD = SAMPLE_TEXTURE2D(_WaterWakeField, sampler_WaterWakeField, saturate(wakeUV - float2(0.0, texel.y))).r;
+                        float hU = SAMPLE_TEXTURE2D(_WaterWakeField, sampler_WaterWakeField, saturate(wakeUV + float2(0.0, texel.y))).r;
+                        float texelWorld = max(wakeTexelUV / max(_WaterWakeFieldParams.z, 1e-6), 0.01);
+                        float2 wakeGradient = float2(hR - hL, hU - hD) / (2.0 * texelWorld);
+                        combinedSlope -= wakeGradient * wakeInside;
+                        rippleTint += abs(SAMPLE_TEXTURE2D(_WaterWakeField, sampler_WaterWakeField, saturate(wakeUV)).r)
+                                      * 0.08 * wakeInside;
+                    }
+                }
+
                 float3 waveNormalWS = normalize(float3(
                     combinedSlope.x, 1.0, combinedSlope.y));
                 if (!all(isfinite(waveNormalWS)))

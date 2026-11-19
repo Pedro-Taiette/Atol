@@ -103,6 +103,35 @@ namespace Assets._Project.Features.WaterEffects
                 arc);
         }
 
+
+        /// <summary>
+        /// Emits a paired water-entry response: a compact, high-contrast first crest,
+        /// followed by a much broader, low-amplitude packet. Longer falls scale both
+        /// radii while the second packet remains deliberately soft and foam-free.
+        /// </summary>
+        public void EmitImpactRipplePair(Vector3 center, float fallDuration, float strength01)
+        {
+            if (!EmitFoam || strength01 <= 0.001f)
+                return;
+
+            float fall01 = Mathf.SmoothStep(0f, 1f, Mathf.InverseLerp(0.2f, 2.2f, fallDuration));
+            float impact = Mathf.Clamp01(strength01);
+
+            float sharpRadius = Mathf.Lerp(6f, 12f, fall01);
+            WaterFoamField.EmitRipple(
+                center, 0.18f, sharpRadius,
+                Mathf.Clamp01(0.92f * impact * rippleStrength),
+                Mathf.Clamp01(rippleFoam * 0.85f * impact),
+                Mathf.Lerp(2.8f, 3.8f, fall01), Vector2.zero, 0f, 0.82f);
+
+            float softRadius = Mathf.Lerp(18f, 36f, fall01);
+            WaterFoamField.EmitRipple(
+                center, 0.55f, softRadius,
+                Mathf.Clamp01(0.23f * impact * rippleStrength),
+                0f,
+                Mathf.Lerp(6.5f, 8.5f, fall01), Vector2.zero, 0f, 4.2f, 0.22f);
+        }
+
         /// <summary>Ring radius (m) a ripple of the given size reaches (range scale 1).</summary>
         public float RippleMaxRadius(float size01)
         {

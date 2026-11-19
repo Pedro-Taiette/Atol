@@ -13,6 +13,7 @@ GameObject:
   - component: {fileID: 1714155984375597575}
   - component: {fileID: 5444443122260910459}
   - component: {fileID: 3798075987593443356}
+  - component: {fileID: 707254003982142001}
   m_Layer: 0
   m_Name: Water
   m_TagString: Untagged
@@ -193,3 +194,24 @@ MonoBehaviour:
     minWavelength: 1.5
     maxWavelength: 12
     amplitudeScale: 4
+--- !u!114 &707254003982142001
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 3625377787630510905}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ff06823f335048719e17ee24e5cd83c9, type: 3}
+  m_Name:
+  m_EditorClassIdentifier: Assembly-CSharp::Assets._Project.Features.WaterEffects.WaterWakeField
+  resolution: 512
+  worldSize: 128
+  waveSpeed: 2.6
+  dampingPerFrame: 0.98
+  blurAmount: 0.012
+  maximumHeight: 0.35
+  activeLifetime: 7
+  FollowTarget: {fileID: 0}
+  updateShader: {fileID: 4800000, guid: a26ea7f12fb24ac686de71fa1880cc11, type: 3}

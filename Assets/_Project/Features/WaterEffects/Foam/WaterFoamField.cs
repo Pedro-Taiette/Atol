@@ -21,6 +21,7 @@ namespace Assets._Project.Features.WaterEffects
     {
         private const int MaxStamps = 48;
         private const int MaxRipples = 32;
+        private const int MaxKelvinWakes = 16;
         private const string UpdateShaderResource = "WaterFoamFieldUpdate";
 
         private static readonly int FieldId = Shader.PropertyToID("_WaterFoamField");
@@ -37,6 +38,11 @@ namespace Assets._Project.Features.WaterEffects
         private static readonly int RippleBId = Shader.PropertyToID("_WaterRippleDataB");
         private static readonly int RippleCId = Shader.PropertyToID("_WaterRippleDataC");
         private static readonly int RippleParamsId = Shader.PropertyToID("_WaterRippleParams");
+        private static readonly int KelvinAId = Shader.PropertyToID("_WaterKelvinDataA");
+        private static readonly int KelvinBId = Shader.PropertyToID("_WaterKelvinDataB");
+        private static readonly int KelvinCId = Shader.PropertyToID("_WaterKelvinDataC");
+        private static readonly int KelvinDId = Shader.PropertyToID("_WaterKelvinDataD");
+        private static readonly int KelvinParamsId = Shader.PropertyToID("_WaterKelvinParams");
 
         public static WaterFoamField Instance { get; private set; }
 
@@ -102,12 +108,12 @@ namespace Assets._Project.Features.WaterEffects
         /// Starts an expanding ripple ring on the water at <paramref name="center"/> (XZ used).
         /// The ring grows from startRadius to maxRadius over lifetime seconds, tilting the water
         /// normal, tinting crests and shedding small foam bits (foamAmount 0..1).
-        /// Evaluated analytically in Wave.shader; at most 16 rings are alive (oldest is replaced).
+        /// Evaluated analytically in Wave.shader; at most 32 rings are alive (oldest is replaced).
         /// </summary>
         public static void EmitRipple(Vector3 center, float startRadius, float maxRadius,
             float strength, float foamAmount, float lifetime)
         {
-            EmitRipple(center, startRadius, maxRadius, strength, foamAmount, lifetime, Vector2.zero, 0f);
+            EmitRipple(center, startRadius, maxRadius, strength, foamAmount, lifetime, Vector2.zero, 0f, 1f);
         }
 
         /// <summary>
@@ -117,11 +123,53 @@ namespace Assets._Project.Features.WaterEffects
         public static void EmitRipple(Vector3 center, float startRadius, float maxRadius,
             float strength, float foamAmount, float lifetime, Vector2 facing, float arc)
         {
+            EmitRipple(center, startRadius, maxRadius, strength, foamAmount, lifetime, facing, arc, 1f);
+        }
+
+        /// <summary>
+        /// Same analytic ring with an exposed crest-width multiplier. Larger values make
+        /// a wider, softer wave packet; values below 1 make a narrow, crisp impact ring.
+        /// </summary>
+        public static void EmitRipple(Vector3 center, float startRadius, float maxRadius,
+            float strength, float foamAmount, float lifetime, Vector2 facing, float arc, float widthScale)
+        {
+            EmitRipple(center, startRadius, maxRadius, strength, foamAmount, lifetime,
+                facing, arc, widthScale, 0f);
+        }
+
+        /// <summary>Same ripple with an optional start delay, useful for layered impact crests.</summary>
+        public static void EmitRipple(Vector3 center, float startRadius, float maxRadius,
+            float strength, float foamAmount, float lifetime, Vector2 facing, float arc,
+            float widthScale, float startDelay)
+        {
             if (!Application.isPlaying || strength <= 0.001f || maxRadius <= startRadius)
                 return;
 
             WaterFoamField field = Instance != null ? Instance : CreateInstance();
-            field.QueueRipple(center, startRadius, maxRadius, strength, foamAmount, lifetime, facing, arc);
+            field.QueueRipple(center, startRadius, maxRadius, strength, foamAmount, lifetime,
+                facing, arc, widthScale, startDelay);
+        }
+
+        /// <summary>
+        /// Adds a directional Kelvin wake packet. The shader evaluates two aft arms at
+        /// the deep-water Kelvin angle, plus weaker transverse crests inside the V.
+        /// This is deliberately separate from EmitRipple: movement wakes must not be
+        /// rendered as circular rings.
+        /// </summary>
+        public static void EmitKelvinWakeRipple(Vector3 stern, Vector3 travelDirection,
+            float wakeLength, float strength, float armWidth, float wavelength,
+            float lifetime = 4f, float halfAngleDegrees = 19.47f, float forwardSpeed = 0f)
+        {
+            if (!Application.isPlaying || strength <= 0.001f || wakeLength <= 0.5f)
+                return;
+
+            Vector2 direction = new Vector2(travelDirection.x, travelDirection.z);
+            if (direction.sqrMagnitude < 1e-5f)
+                return;
+
+            WaterFoamField field = Instance != null ? Instance : CreateInstance();
+            field.QueueKelvinWake(stern, direction.normalized, wakeLength, strength,
+                armWidth, wavelength, lifetime, halfAngleDegrees, forwardSpeed);
         }
 
         private static WaterFoamField CreateInstance()
@@ -152,6 +200,7 @@ namespace Assets._Project.Features.WaterEffects
                 Instance = null;
             Shader.SetGlobalVector(FieldParamsId, Vector4.zero);
             Shader.SetGlobalVector(RippleParamsId, Vector4.zero);
+            Shader.SetGlobalVector(KelvinParamsId, Vector4.zero);
             ReleaseResources();
         }
 
@@ -164,9 +213,15 @@ namespace Assets._Project.Features.WaterEffects
         private readonly Vector4[] rippleB = new Vector4[MaxRipples];
         private readonly Vector4[] rippleC = new Vector4[MaxRipples];
         private int rippleCount;
+        private readonly Vector4[] kelvinA = new Vector4[MaxKelvinWakes];
+        private readonly Vector4[] kelvinB = new Vector4[MaxKelvinWakes];
+        private readonly Vector4[] kelvinC = new Vector4[MaxKelvinWakes];
+        private readonly Vector4[] kelvinD = new Vector4[MaxKelvinWakes];
+        private int kelvinCount;
 
         private void QueueRipple(Vector3 center, float startRadius, float maxRadius,
-            float strength, float foamAmount, float rippleLifetime, Vector2 facing, float arc)
+            float strength, float foamAmount, float rippleLifetime, Vector2 facing, float arc,
+            float widthScale, float startDelay)
         {
             int slot;
             if (rippleCount < MaxRipples)
@@ -182,11 +237,45 @@ namespace Assets._Project.Features.WaterEffects
                         slot = i;
             }
 
-            rippleA[slot] = new Vector4(center.x, center.z, Time.time, Mathf.Max(0.05f, startRadius));
+            rippleA[slot] = new Vector4(center.x, center.z,
+                Time.time + Mathf.Max(0f, startDelay), Mathf.Max(0.05f, startRadius));
             rippleB[slot] = new Vector4(maxRadius, Mathf.Clamp01(strength), Mathf.Clamp01(foamAmount),
                 Mathf.Max(0.3f, rippleLifetime));
             Vector2 f = facing.sqrMagnitude > 1e-6f ? facing.normalized : Vector2.up;
-            rippleC[slot] = new Vector4(f.x, f.y, facing.sqrMagnitude > 1e-6f ? Mathf.Clamp01(arc) : 0f, 0f);
+            rippleC[slot] = new Vector4(
+                f.x,
+                f.y,
+                facing.sqrMagnitude > 1e-6f ? Mathf.Clamp01(arc) : 0f,
+                Mathf.Clamp(widthScale, 0.35f, 6f));
+        }
+
+        private void QueueKelvinWake(Vector3 stern, Vector2 direction, float wakeLength,
+            float strength, float armWidth, float wavelength, float wakeLifetime,
+            float halfAngleDegrees, float forwardSpeed)
+        {
+            int slot;
+            if (kelvinCount < MaxKelvinWakes)
+            {
+                slot = kelvinCount++;
+            }
+            else
+            {
+                slot = 0;
+                for (int i = 1; i < kelvinCount; i++)
+                    if (kelvinA[i].z < kelvinA[slot].z)
+                        slot = i;
+            }
+
+            kelvinA[slot] = new Vector4(stern.x, stern.z, Time.time, Mathf.Max(1f, wakeLength));
+            kelvinB[slot] = new Vector4(
+                Mathf.Clamp01(strength),
+                Mathf.Max(0.5f, wakeLifetime),
+                Mathf.Clamp(armWidth, 0.12f, 2f),
+                Mathf.Clamp(wavelength, 0.5f, 12f));
+            float angle = Mathf.Clamp(halfAngleDegrees, 5f, 35f) * Mathf.Deg2Rad;
+            kelvinC[slot] = new Vector4(direction.x, direction.y, Mathf.Tan(angle), 0f);
+            // The apex keeps travelling with the emitter while the trailing V grows behind it.
+            kelvinD[slot] = new Vector4(Mathf.Clamp(forwardSpeed, 0f, 30f), 0f, 0f, 0f);
         }
 
         private void UpdateRipples()
@@ -208,6 +297,26 @@ namespace Assets._Project.Features.WaterEffects
                 Shader.SetGlobalVectorArray(RippleAId, rippleA);
                 Shader.SetGlobalVectorArray(RippleBId, rippleB);
                 Shader.SetGlobalVectorArray(RippleCId, rippleC);
+            }
+
+            for (int i = kelvinCount - 1; i >= 0; i--)
+            {
+                if (now - kelvinA[i].z <= kelvinB[i].y)
+                    continue;
+                kelvinCount--;
+                kelvinA[i] = kelvinA[kelvinCount];
+                kelvinB[i] = kelvinB[kelvinCount];
+                kelvinC[i] = kelvinC[kelvinCount];
+                kelvinD[i] = kelvinD[kelvinCount];
+            }
+            Shader.SetGlobalVector(KelvinParamsId,
+                new Vector4(intensity > 0f ? kelvinCount : 0, now, 0f, 0f));
+            if (kelvinCount > 0)
+            {
+                Shader.SetGlobalVectorArray(KelvinAId, kelvinA);
+                Shader.SetGlobalVectorArray(KelvinBId, kelvinB);
+                Shader.SetGlobalVectorArray(KelvinCId, kelvinC);
+                Shader.SetGlobalVectorArray(KelvinDId, kelvinD);
             }
         }
 
@@ -384,6 +493,8 @@ namespace Assets._Project.Features.WaterEffects
             if (updateMaterial != null) { Destroy(updateMaterial); updateMaterial = null; }
             windowValid = false;
             stampCount = 0;
+            rippleCount = 0;
+            kelvinCount = 0;
         }
     }
 }

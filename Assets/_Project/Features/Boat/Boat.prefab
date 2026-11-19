@@ -46,6 +46,8 @@ GameObject:
   - component: {fileID: 1143980588799794662}
   - component: {fileID: 5738198442180057773}
   - component: {fileID: 2481109813123251297}
+  - component: {fileID: 7000000000000000101}
+  - component: {fileID: 7000000000000000102}
   m_Layer: 6
   m_Name: Boat
   m_TagString: Untagged
@@ -528,3 +530,71 @@ Transform:
   m_CorrespondingSourceObject: {fileID: 5612554356972755493, guid: 4335a9b6a6d39524f8b33b8707047099, type: 3}
   m_PrefabInstance: {fileID: 3019358085577910455}
   m_PrefabAsset: {fileID: 0}
+
+--- !u!114 &7000000000000000101
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2941124647483597383}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 8f0604b1f3612574bad20a803964c973, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Assets._Project.Features.WaterEffects.WaterContactFoam
+  trailRadiusMin: 0.5
+  trailRadiusMax: 1.1
+  trailFoamRate: 30
+  burstRadius: 1.6
+  burstStrength: 0.85
+  rippleRadiusSmall: 4
+  rippleRadiusLarge: 30
+  rippleLifeShort: 5
+  rippleLifeLong: 10
+  rippleStrength: 1
+  rippleFoam: 0.15
+  EmitFoam: 1
+--- !u!114 &7000000000000000102
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 2941124647483597383}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 06650085cb141f2468e950a5359e4d63, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Assets._Project.Features.WaterEffects.BoatFoamEmitter
+  boat: {fileID: 5738198442180057773}
+  probes: {fileID: 3262405023938500733}
+  foam: {fileID: 7000000000000000101}
+  ocean: {fileID: 0}
+  hullNames:
+  - Boat
+  ignoreWords:
+  - sail
+  - mast
+  - rope
+  - sprit
+  - block
+  - tiller
+  - foot
+  hullSizeOverride: {x: 0, y: 0, z: 0}
+  waterlineFraction: 0.4
+  outlinePoints: 20
+  minSpeed: 0.25
+  fullSpeed: 7
+  idleIntensity: 0.25
+  leadBias: 0.6
+  contactSlack: 0.15
+  wakeImpulseInterval: 0.38
+  wakeImpulseRadius: 0.8
+  wakeImpulseStrength: 0.42
+  wakeMaxLength: 22
+  rippleSizeFloor: 0.35
+  idleRippleInterval: 2.4
+  massRange: {x: 80, y: 2500}
+  footprintRange: {x: 1.2, y: 7}
+  fullSlamSpeed: 8

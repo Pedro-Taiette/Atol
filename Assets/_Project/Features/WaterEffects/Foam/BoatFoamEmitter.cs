@@ -12,19 +12,20 @@ namespace Assets._Project.Features.WaterEffects
     /// stamped along that outline at the real water height. Leading edges foam most while
     /// moving; a stationary hull keeps a thin waterline rim.
     ///
-    /// Ripples are expanding rings whose SIZE is inferred from the boat's mass, its measured
-    /// hull footprint and the spread of the buoyancy probes. Added automatically by BoatController.
+    /// Movement wakes are emitted as direction-aware Kelvin V packets, with a low-energy
+    /// heightfield impulse retained as supplemental displacement. Added automatically by
+    /// WaterWakeField for live BoatController roots.
     /// </summary>
     [DisallowMultipleComponent]
+    [DefaultExecutionOrder(100)]
     [RequireComponent(typeof(WaterContactFoam))]
     public sealed class BoatFoamEmitter : MonoBehaviour
     {
-        public enum ArcSide { Behind, Ahead }
-
         [Header("References (auto-resolved)")]
         [SerializeField] private BoatController boat;
         [SerializeField] private OceanBuoyancy probes;
         [SerializeField] private WaterContactFoam foam;
+        [SerializeField] private SpectralOceanFFT ocean;
 
         [Header("Hull Outline")]
         [Tooltip("Hull mesh object names measured for the outline (e.g. \"Boat\"). Empty = every non-ignored mesh under the boat.")]
@@ -40,7 +41,7 @@ namespace Assets._Project.Features.WaterEffects
 
         [Header("Wake Foam")]
         [Tooltip("Planar speed (m/s) where hull foam starts to build.")]
-        [SerializeField, Min(0f)] private float minSpeed = 0.4f;
+        [SerializeField, Min(0f)] private float minSpeed = 0.25f;
         [Tooltip("Planar speed (m/s) where hull foam is at full intensity.")]
         [SerializeField, Min(0.1f)] private float fullSpeed = 7f;
         [Tooltip("Foam intensity while stationary, so a floating hull still rims the waterline.")]
@@ -50,13 +51,17 @@ namespace Assets._Project.Features.WaterEffects
         [Tooltip("How far (m) the water may be below the hull bottom / above the rail before a point stops foaming.")]
         [SerializeField, Min(0f)] private float contactSlack = 0.15f;
 
-        [Header("Ripples")]
-        [Tooltip("Metres travelled between ripples, as a fraction of the ripple's final radius (bigger rings are emitted less often).")]
-        [SerializeField, Range(0.1f, 1.5f)] private float rippleSpacingPerRadius = 0.4f;
+        [Header("Kelvin Wake Simulation")]
+        [Tooltip("Seconds between source events. Distance between circular impulses grows with boat speed to build a continuous moving wake.")]
+        [SerializeField, Range(0.2f, 1.2f)] private float wakeImpulseInterval = 0.38f;
+        [Tooltip("Base radius (metres) of each circular height impulse.")]
+        [SerializeField, Range(0.2f, 1.5f)] private float wakeImpulseRadius = 0.8f;
+        [Tooltip("Vertical velocity injected into the water heightfield at each source point.")]
+        [SerializeField, Range(0f, 0.9f)] private float wakeImpulseStrength = 0.42f;
+        [Tooltip("Maximum trailing distance over which the two Kelvin wake arms spread.")]
+        [SerializeField, Min(2f)] private float wakeMaxLength = 22f;
         [Tooltip("Lifts the size estimate so even a small boat makes clearly visible rings: size = floor + (1 - floor) * estimate.")]
         [SerializeField, Range(0f, 0.9f)] private float rippleSizeFloor = 0.35f;
-        [Tooltip("Which way moving ripples (half circles) spread: behind the boat like a trail, or ahead like a bow wave.")]
-        [SerializeField] private ArcSide arcSide = ArcSide.Behind;
         [Tooltip("Seconds between small ripples while drifting or idle.")]
         [SerializeField, Min(0.2f)] private float idleRippleInterval = 2.4f;
         [Tooltip("Mass (kg) mapped to size 0 and size 1 for the mass part of the size estimate.")]
@@ -79,9 +84,16 @@ namespace Assets._Project.Features.WaterEffects
 
         private Vector3[] previousPoints;
         private bool[] hadPrevious;
-        private float travelled;
+        private float wakeDistanceAccumulator;
+        private float wakeTrailLength;
+        private float wakeIdleTime;
+        private Vector3 lastWakeDirection;
         private float nextIdleRippleTime;
         private bool warnedNoSamples;
+        private Vector3 previousBoatPosition;
+        private bool hasPreviousBoatPosition;
+        private Vector3 previousPhysicsPosition;
+        private bool hasPreviousPhysicsPosition;
 
         // ------------------------------------------------------------------ lifecycle
 
@@ -96,7 +108,16 @@ namespace Assets._Project.Features.WaterEffects
             if (boat != null)
                 boat.HullSlammed += OnHullSlammed;
             hullMeasured = false;
+            wakeDistanceAccumulator = 0f;
+            wakeTrailLength = 0f;
+            wakeIdleTime = 0f;
+            lastWakeDirection = Vector3.zero;
             nextIdleRippleTime = Time.time + 0.5f;
+            previousBoatPosition = transform.position;
+            hasPreviousBoatPosition = true;
+            previousPhysicsPosition = boat != null && boat.Body != null
+                ? boat.Body.position : transform.position;
+            hasPreviousPhysicsPosition = true;
         }
 
         private void OnDisable()
@@ -125,6 +146,7 @@ namespace Assets._Project.Features.WaterEffects
             if (boat == null) boat = GetComponent<BoatController>();
             if (probes == null) probes = GetComponent<OceanBuoyancy>();
             if (foam == null) foam = GetComponent<WaterContactFoam>();
+            if (ocean == null) ocean = Object.FindAnyObjectByType<SpectralOceanFFT>();
         }
 
         // ------------------------------------------------------------------ hull measurement
@@ -175,9 +197,14 @@ namespace Assets._Project.Features.WaterEffects
         private bool TryGetWaterHeight(Vector3 world, out float height)
         {
             height = 0f;
-            SpectralOceanFFT.SurfaceSample[] samples = probes != null ? probes.LatestSamples : null;
+            SpectralOceanFFT.SurfaceSample[] samples = probes != null && probes.HasFreshSamples ? probes.LatestSamples : null;
             if (samples == null || samples.Length == 0)
-                return false;
+            {
+                if (ocean == null) ocean = Object.FindAnyObjectByType<SpectralOceanFFT>();
+                if (ocean == null) return false;
+                height = ocean.WaterLevelY;
+                return true;
+            }
 
             float sum = 0f, weightSum = 0f;
             for (int i = 0; i < samples.Length; i++)
@@ -192,28 +219,131 @@ namespace Assets._Project.Features.WaterEffects
             }
 
             if (weightSum <= 0f)
-                return false;
+            {
+                if (ocean == null) ocean = Object.FindAnyObjectByType<SpectralOceanFFT>();
+                if (ocean == null) return false;
+                height = ocean.WaterLevelY;
+                return true;
+            }
             height = sum / weightSum;
             return true;
+        }
+
+        // ------------------------------------------------------------------ fixed-step movement wake
+
+        private void FixedUpdate()
+        {
+            if (boat == null)
+                Resolve();
+            if (boat == null)
+                return;
+
+            Rigidbody body = boat.Body;
+            Vector3 currentPosition = body != null ? body.position : transform.position;
+            if (!hasPreviousPhysicsPosition)
+            {
+                previousPhysicsPosition = currentPosition;
+                hasPreviousPhysicsPosition = true;
+                return;
+            }
+
+            float dt = Mathf.Max(Time.fixedDeltaTime, 0.0001f);
+            Vector3 displacement = Vector3.ProjectOnPlane(
+                currentPosition - previousPhysicsPosition, Vector3.up);
+            previousPhysicsPosition = currentPosition;
+
+            Vector3 measuredVelocity = displacement / dt;
+            Vector3 rigidbodyVelocity = body != null
+                ? Vector3.ProjectOnPlane(body.linearVelocity, Vector3.up)
+                : Vector3.zero;
+
+            // Body velocity is reliable for dynamic boats; measured displacement also
+            // covers kinematic/moved-by-script boats and catches a velocity that is
+            // stale for one physics step. Prefer the measured direction when present.
+            Vector3 planarVelocity = measuredVelocity.sqrMagnitude > 0.0225f
+                ? measuredVelocity
+                : rigidbodyVelocity;
+            if (measuredVelocity.sqrMagnitude > 0.0225f && rigidbodyVelocity.sqrMagnitude > 0.0225f &&
+                Vector3.Dot(measuredVelocity, rigidbodyVelocity) > 0f)
+            {
+                planarVelocity = Vector3.Lerp(measuredVelocity, rigidbodyVelocity, 0.25f);
+            }
+
+            float speed = planarVelocity.magnitude;
+            Vector3 travelDirection = speed > 0.15f
+                ? planarVelocity / speed
+                : Vector3.zero;
+
+            // Fallback for a boat driven by a controller that rotates/moves the root
+            // without exposing a useful Rigidbody velocity.
+            if (travelDirection.sqrMagnitude < 0.001f &&
+                Mathf.Abs(boat.ForwardSpeed) > 0.15f)
+            {
+                travelDirection = Vector3.ProjectOnPlane(
+                    transform.forward * Mathf.Sign(boat.ForwardSpeed), Vector3.up).normalized;
+                speed = Mathf.Max(speed, Mathf.Abs(boat.ForwardSpeed));
+            }
+
+            if (speed <= minSpeed || travelDirection.sqrMagnitude < 0.001f)
+            {
+                wakeDistanceAccumulator = 0f;
+                wakeIdleTime += dt;
+                if (wakeIdleTime > 0.75f)
+                {
+                    wakeTrailLength = 0f;
+                    lastWakeDirection = Vector3.zero;
+                }
+                return;
+            }
+
+            if (lastWakeDirection.sqrMagnitude > 0.01f &&
+                Vector3.Dot(lastWakeDirection, travelDirection) < 0.72f)
+            {
+                // Start a new packet stream after a real heading change. Existing
+                // packets retain their old direction in the shader.
+                wakeDistanceAccumulator = 0f;
+                wakeTrailLength = 0f;
+            }
+
+            lastWakeDirection = travelDirection;
+            wakeIdleTime = 0f;
+
+            float movementDistance = Mathf.Max(displacement.magnitude, speed * dt * 0.75f);
+            wakeTrailLength = Mathf.Min(wakeMaxLength, wakeTrailLength + movementDistance);
+            wakeDistanceAccumulator += movementDistance;
+
+            // A shorter minimum distance is important for slow sailboats. At speed,
+            // events remain spaced in world distance so the wake does not become a
+            // frame-rate-dependent particle stream.
+            float spacing = Mathf.Clamp(speed * wakeImpulseInterval, 0.75f, 2.8f);
+            float speed01 = Mathf.InverseLerp(minSpeed, Mathf.Max(fullSpeed, 1f), speed);
+            float radius = wakeImpulseRadius * Mathf.Lerp(1f, 1.35f, sizeEstimate01);
+            float trailBuild = Mathf.Lerp(0.62f, 1f,
+                Mathf.Clamp01(wakeTrailLength / Mathf.Max(2f, wakeMaxLength)));
+            float strength = wakeImpulseStrength * Mathf.Lerp(0.52f, 1f, speed01) * trailBuild;
+            float sternOffset = Mathf.Max(0.8f, hullHalfSize.z * 0.82f);
+
+            int emitted = 0;
+            while (wakeDistanceAccumulator >= spacing && emitted < 4)
+            {
+                float overshoot = wakeDistanceAccumulator - spacing;
+                Vector3 pathPosition = currentPosition - travelDirection * overshoot;
+                Vector3 stern = pathPosition - travelDirection * sternOffset;
+                WaterWakeField.EmitKelvinWake(
+                    stern, travelDirection, radius, strength, wakeMaxLength, 19.47f, speed);
+                wakeDistanceAccumulator -= spacing;
+                emitted++;
+            }
         }
 
         // ------------------------------------------------------------------ per frame
 
         private void LateUpdate()
         {
-            if (probes == null || boat == null || foam == null || !foam.EmitFoam)
+            if (boat == null)
                 return;
 
-            if (!probes.HasFreshSamples || probes.LatestSamples == null)
-            {
-                if (!warnedNoSamples && Time.time > 3f)
-                {
-                    warnedNoSamples = true;
-                    Debug.LogWarning("BoatFoamEmitter: no fresh water samples from OceanBuoyancy, so no hull foam yet.", this);
-                }
-                return;
-            }
-
+            bool hasFreshSamples = probes != null && probes.HasFreshSamples && probes.LatestSamples != null;
             if (!hullMeasured)
                 MeasureHull();
 
@@ -225,83 +355,101 @@ namespace Assets._Project.Features.WaterEffects
             }
 
             Rigidbody body = boat.Body;
-            float dt = Time.deltaTime;
-            float speed = boat.PlanarSpeed;
-            float speed01 = Mathf.InverseLerp(minSpeed, fullSpeed, speed);
-            Vector3 travelDir = body != null
-                ? Vector3.ProjectOnPlane(body.linearVelocity, Vector3.up).normalized
+            float dt = Mathf.Max(Time.deltaTime, 0.0001f);
+            Vector3 planarVelocity = body != null
+                ? Vector3.ProjectOnPlane(body.linearVelocity, Vector3.up)
                 : Vector3.zero;
-
-            for (int i = 0; i < count; i++)
+            if (planarVelocity.sqrMagnitude < 0.04f && hasPreviousBoatPosition)
             {
-                Vector3 local = new Vector3(outlineLocal[i].x, hull.WaterlineY, outlineLocal[i].y);
-                Vector3 world = transform.TransformPoint(local);
-                if (!TryGetWaterHeight(world, out float waterY))
-                {
-                    hadPrevious[i] = false;
-                    continue;
-                }
+                Vector3 transformVelocity = Vector3.ProjectOnPlane(
+                    (transform.position - previousBoatPosition) / dt, Vector3.up);
+                if (transformVelocity.sqrMagnitude > planarVelocity.sqrMagnitude)
+                    planarVelocity = transformVelocity;
+            }
+            previousBoatPosition = transform.position;
+            hasPreviousBoatPosition = true;
 
-                // Only foam where the water actually meets the hull side.
-                float bottomY = transform.TransformPoint(new Vector3(local.x, hull.MinY, local.z)).y;
-                float topY = transform.TransformPoint(new Vector3(local.x, hull.MaxY, local.z)).y;
-                if (waterY < bottomY - contactSlack || waterY > topY + contactSlack)
-                {
-                    hadPrevious[i] = false;
-                    continue;
-                }
+            float speed = Mathf.Max(boat.PlanarSpeed, planarVelocity.magnitude);
+            float speed01 = Mathf.InverseLerp(minSpeed, fullSpeed, speed);
+            Vector3 travelDir = planarVelocity.sqrMagnitude > 0.04f
+                ? planarVelocity.normalized
+                : (Mathf.Abs(boat.ForwardSpeed) > minSpeed
+                    ? Vector3.ProjectOnPlane(transform.forward * Mathf.Sign(boat.ForwardSpeed), Vector3.up).normalized
+                    : Vector3.zero);
 
-                Vector3 point = new Vector3(world.x, waterY, world.z);
-                Vector3 from = hadPrevious[i] ? previousPoints[i] : point;
-                previousPoints[i] = point;
-                hadPrevious[i] = true;
-
-                // The side of the hull pushing into the water foams most.
-                float lead = 0.5f;
-                if (travelDir.sqrMagnitude > 0.01f)
+            // Hull foam still needs real surface samples, but the movement wake does not.
+            // The shader evaluates only world XZ, so its Y can safely use the hull waterline
+            // estimate when probes/ocean sampling is temporarily unavailable.
+            if (hasFreshSamples && foam != null)
+            {
+                for (int i = 0; i < count; i++)
                 {
-                    Vector3 outwardWorld = transform.TransformDirection(new Vector3(outlineNormal[i].x, 0f, outlineNormal[i].y));
-                    lead = Mathf.Clamp01(0.5f + 0.5f * Vector3.Dot(outwardWorld, travelDir));
+                    Vector3 local = new Vector3(outlineLocal[i].x, hull.WaterlineY, outlineLocal[i].y);
+                    Vector3 world = transform.TransformPoint(local);
+                    if (!TryGetWaterHeight(world, out float waterY))
+                    {
+                        hadPrevious[i] = false;
+                        continue;
+                    }
+    
+                    // Only foam where the water actually meets the hull side.
+                    float bottomY = transform.TransformPoint(new Vector3(local.x, hull.MinY, local.z)).y;
+                    float topY = transform.TransformPoint(new Vector3(local.x, hull.MaxY, local.z)).y;
+                    if (waterY < bottomY - contactSlack || waterY > topY + contactSlack)
+                    {
+                        hadPrevious[i] = false;
+                        continue;
+                    }
+    
+                    Vector3 point = new Vector3(world.x, waterY, world.z);
+                    Vector3 from = hadPrevious[i] ? previousPoints[i] : point;
+                    previousPoints[i] = point;
+                    hadPrevious[i] = true;
+    
+                    // The side of the hull pushing into the water foams most.
+                    float lead = 0.5f;
+                    if (travelDir.sqrMagnitude > 0.01f)
+                    {
+                        Vector3 outwardWorld = transform.TransformDirection(new Vector3(outlineNormal[i].x, 0f, outlineNormal[i].y));
+                        lead = Mathf.Clamp01(0.5f + 0.5f * Vector3.Dot(outwardWorld, travelDir));
+                    }
+                    float movingPart = speed01 * Mathf.Lerp(1f - leadBias, 1f, lead);
+                    float intensity = Mathf.Max(idleIntensity, movingPart);
+                    foam.EmitTrail(from, point, intensity, dt);
                 }
-                float movingPart = speed01 * Mathf.Lerp(1f - leadBias, 1f, lead);
-                float intensity = Mathf.Max(idleIntensity, movingPart);
-                foam.EmitTrail(from, point, intensity, dt);
             }
 
-            UpdateRipples(dt, speed, speed01, travelDir);
+            UpdateIdleRipples(dt, speed, travelDir);
         }
 
-        private void UpdateRipples(float dt, float speed, float speed01, Vector3 travelDir)
+        private void UpdateIdleRipples(float dt, float speed, Vector3 travelDir)
         {
-            Vector3 centerWorld = transform.TransformPoint(new Vector3(hullCenter.x, hull.WaterlineY, hullCenter.z));
-            if (!TryGetWaterHeight(centerWorld, out float waterY))
-                return;
-            centerWorld.y = waterY;
+            Vector3 centerWorld = transform.TransformPoint(
+                new Vector3(hullCenter.x, hull.WaterlineY, hullCenter.z));
+            if (TryGetWaterHeight(centerWorld, out float waterY))
+                centerWorld.y = waterY;
 
-            // Rings start clearly outside the hull: at least 60% of the half-length.
-            float startRadius = Mathf.Max(0.3f, Mathf.Max(hullHalfSize.x, 0.6f * hullHalfSize.z));
-            float size = rippleSize01;
-
-            // Moving: a half-circle ring every so often, spreading away behind (or ahead of) the hull.
-            // Spacing grows with ring size so large rings do not pile up.
-            travelled += speed * dt;
-            float spacing = Mathf.Max(1.5f, rippleSpacingPerRadius * foam.RippleMaxRadius(size));
-            if (speed01 > 0.05f && travelled >= spacing && travelDir.sqrMagnitude > 0.01f)
+            // Movement wakes are emitted in FixedUpdate from actual Rigidbody travel.
+            // Keep only the soft circular idle pulse here.
+            if (speed > minSpeed && travelDir.sqrMagnitude > 0.01f)
             {
-                travelled = 0f;
-                bool behind = arcSide == ArcSide.Behind;
-                Vector3 facing = behind ? -travelDir : travelDir;
-                // Behind: emit from the stern end so the arc leaves the hull's wake; Ahead: from the bow end.
-                Vector3 origin = centerWorld + travelDir * (behind ? -0.5f : 0.5f) * hullHalfSize.z;
-                foam.EmitRipple(origin, startRadius, size * Mathf.Lerp(0.75f, 1f, speed01),
-                    Mathf.Lerp(0.55f, 1f, speed01), facing, 1f);
+                wakeIdleTime = 0f;
+                return;
             }
 
-            // Idle / drifting: faint full circles from the bobbing hull.
+            wakeIdleTime += dt;
+            if (wakeIdleTime > 0.75f)
+            {
+                wakeTrailLength = 0f;
+                lastWakeDirection = Vector3.zero;
+                wakeDistanceAccumulator = 0f;
+            }
+
             if (Time.time >= nextIdleRippleTime)
             {
                 nextIdleRippleTime = Time.time + idleRippleInterval * Mathf.Lerp(1.3f, 0.8f, sizeEstimate01);
-                foam.EmitRipple(centerWorld, startRadius, size * 0.5f, 0.4f);
+                WaterFoamField.EmitRipple(centerWorld, 0.08f, wakeImpulseRadius * 3.5f,
+                    Mathf.Clamp01(0.12f * rippleSize01), 0f, 3.2f);
             }
         }
 
@@ -312,9 +460,10 @@ namespace Assets._Project.Features.WaterEffects
 
             float intensity = Mathf.Clamp01(impactSpeed / fullSlamSpeed);
             Vector3 centerWorld = transform.TransformPoint(new Vector3(hullCenter.x, hull.WaterlineY, hullCenter.z));
-            if (!TryGetWaterHeight(centerWorld, out float waterY))
-                return;
-            centerWorld.y = waterY;
+            if (TryGetWaterHeight(centerWorld, out float waterY))
+                centerWorld.y = waterY;
+            else
+                centerWorld.y = transform.TransformPoint(new Vector3(hullCenter.x, hull.WaterlineY, hullCenter.z)).y;
 
             // Splash blobs around the outline + one big FULL-CIRCLE ripple.
             for (int i = 0; i < outlineLocal.Length; i += 2)
