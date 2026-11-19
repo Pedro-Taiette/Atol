@@ -117,8 +117,8 @@ Material:
     - _ShoreWashPulseStrength: 0.65
     - _ShoreWashSpacingMeters: 42
     - _ShoreWashSpeed: 2.2
-    - _SkyReflectionFresnel: 0.7
-    - _SkyReflectionIntensity: 1
+    - _SkyReflectionFresnel: 1
+    - _SkyReflectionIntensity: 2.18
     - _SkyReflectionRoughness: 0
     - _SkyReflectionStrength: 0.538
     - _SkyUseCustomCube: 1
