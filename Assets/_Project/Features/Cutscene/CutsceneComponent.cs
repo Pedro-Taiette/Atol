@@ -108,9 +108,17 @@ public class CutsceneComponent : MonoBehaviour
         if (Timeline != null)
         {
             Timeline.stopped -= OnTimelineStopped;
-            Timeline.Play();
-            Timeline.time = Timeline.duration;
+            Timeline.stopped += OnTimelineStopped;
+
+            if (Timeline.duration > 0.1)
+            {
+                Timeline.time = Timeline.duration - 0.1;
+            }
             Timeline.Evaluate();
+            
+            Timeline.Resume();
+
+            return;
         }
         else if (Clip != null)
         {
