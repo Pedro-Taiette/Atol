@@ -22,6 +22,12 @@ public sealed class PlayerController : MonoBehaviour
     public InputActionReference JumpAction;
     [Tooltip("Optional: hold to swim downward. While swimming, JumpAction performs a stamina-costing hop out of the water (SwimmingMovement.EnableJumpHop).")]
     public InputActionReference DiveAction;
+    [Tooltip("Optional Input System action for the grounded dash. If unassigned, Left Alt is used.")]
+    public InputActionReference DashAction;
+
+    [Header("HUD")]
+    [Tooltip("Optional. Created automatically (bottom-right of the screen) when empty.")]
+    public StatusBarUI StaminaBar;
 
     [Header("Boat Boarding")]
     [Tooltip("Optional CharacterController reference. If empty, one is searched on this object.")]
@@ -93,6 +99,12 @@ public sealed class PlayerController : MonoBehaviour
         Stamina = StaminaComponent.Resolve(gameObject);
         if (SwimmingMovement != null && SwimmingMovement.Stamina == null)
             SwimmingMovement.Stamina = Stamina;
+        if (GroundedMovement != null && GroundedMovement.Stamina == null)
+            GroundedMovement.Stamina = Stamina;
+
+        if (StaminaBar == null)
+            StaminaBar = gameObject.AddComponent<StatusBarUI>();
+        StaminaBar.Bind(Stamina, "Stamina");
 
         boatControlHint = GetComponent<BoatControlHintUI>();
         if (boatControlHint == null)
@@ -144,10 +156,12 @@ public sealed class PlayerController : MonoBehaviour
         Subscribe(JumpAction, OnJumped);
         Subscribe(DiveAction, OnDiveChanged);
         Subscribe(InteractAction, OnInteract);
+        Subscribe(DashAction, OnDashed);
         EnableAction(MovementAction);
         EnableAction(JumpAction);
         EnableAction(DiveAction);
         EnableAction(InteractAction);
+        EnableAction(DashAction);
         waterSampleGeneration++;
         waterSamplePending = false;
         activeMovement?.Move(latestDirection);
@@ -158,6 +172,8 @@ public sealed class PlayerController : MonoBehaviour
         // Only use direct keyboard interaction when no Input System action is assigned.
         if (InteractAction == null)
             UpdateKeyboardFallbackInteraction();
+        if (DashAction == null && Keyboard.current != null && Keyboard.current.leftAltKey.wasPressedThisFrame)
+            TryDash();
 
         UpdateBoatCollisionIgnore();
         UpdateSailRotationInput();
@@ -180,10 +196,12 @@ public sealed class PlayerController : MonoBehaviour
         Unsubscribe(JumpAction, OnJumped);
         Unsubscribe(DiveAction, OnDiveChanged);
         Unsubscribe(InteractAction, OnInteract);
+        Unsubscribe(DashAction, OnDashed);
         DisableAction(MovementAction);
         DisableAction(JumpAction);
         DisableAction(DiveAction);
         DisableAction(InteractAction);
+        DisableAction(DashAction);
         CancelPendingWaterSample();
         EndBoatCollisionIgnore();
 
@@ -940,6 +958,19 @@ public sealed class PlayerController : MonoBehaviour
     {
         if (SwimmingMovement != null)
             SwimmingMovement.SetDiveInput(!context.canceled);
+    }
+
+    private void OnDashed(InputAction.CallbackContext context)
+    {
+        if (context.performed)
+            TryDash();
+    }
+
+    /// <summary>Dashing is a grounded-only dodge; it is ignored while swimming or aboard a boat.</summary>
+    private void TryDash()
+    {
+        if (GroundedMovement != null && !isAboardBoat && IsSameMovement(activeMovement, GroundedMovement))
+            GroundedMovement.Dash();
     }
 
     private static void Subscribe(InputActionReference reference, System.Action<InputAction.CallbackContext> callback)
