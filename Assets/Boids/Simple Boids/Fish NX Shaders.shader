@@ -2,6 +2,10 @@
 // #NVJOB Simple Boids. MIT license - license_nvjob.txt
 // URP port for Unity 6. Material property names are kept compatible with the
 // original Fish materials so existing assets retain their settings.
+//
+// Minimal underwater-depth fix: adds a DepthOnly pass using the same
+// vertex deformation as ForwardLit, so the camera depth texture follows
+// the animated fish mesh when URP performs a depth prepass.
 
 Shader "#NVJOB/NX Shaders/Boids/Fish"
 {
@@ -64,6 +68,213 @@ Shader "#NVJOB/NX Shaders/Boids/Fish"
         LOD 200
         Cull Off
         ZWrite On
+
+        // IMPORTANT: this pass must deform vertices exactly like ForwardLit.
+        // URP uses it when generating a depth prepass / camera depth texture.
+        Pass
+        {
+            Name "DepthOnly"
+            Tags { "LightMode" = "DepthOnly" }
+
+            ZWrite On
+            ZTest LEqual
+            ColorMask 0
+
+            HLSLPROGRAM
+            #pragma target 3.0
+            #pragma vertex DepthOnlyVertex
+            #pragma fragment DepthOnlyFragment
+            #pragma multi_compile_instancing
+
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+            // Keep this UnityPerMaterial layout identical to ForwardLit for SRP Batcher compatibility.
+            CBUFFER_START(UnityPerMaterial)
+                float4 _Color;
+                float4 _ReflectColor;
+                float4 _SpecColor;
+                float4 _MainTex_ST;
+                float4 _SpecMap_ST;
+                float4 _OcclusionMap_ST;
+                float4 _BumpMap_ST;
+                float4 _BumpMapD_ST;
+                float4 _EmissionTex_ST;
+                half _Saturation;
+                half _Brightness;
+                half _Contrast;
+                half _SpecMapUV;
+                half _Shininess;
+                half _SpecMapInts;
+                half _OcclusionMapUv;
+                half _IntensityOc;
+                half _IntensityNm;
+                half _BumpMapDUV;
+                half _IntensityNmD;
+                half _IntensityRef;
+                half _SaturationRef;
+                half _ContrastRef;
+                half _BiasNormal;
+                half _ScriptControl;
+                half _SwimmingPower;
+                half _SwimmingScale;
+                half _SwimmingSpeed;
+                half _WaveBody;
+                half _Wobble;
+                half _WaveY;
+                half _WaveYSpeed;
+            CBUFFER_END
+
+            struct DepthOnlyAttributes
+            {
+                float4 positionOS : POSITION;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+            };
+
+            struct DepthOnlyVaryings
+            {
+                float4 positionCS : SV_POSITION;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+                UNITY_VERTEX_OUTPUT_STEREO
+            };
+
+            float3 ApplyFishAnimation(float3 positionOS)
+            {
+                float3 objectAnchorWS = TransformObjectToWorld(float3(1.0, 1.0, 1.0));
+                half sinT = sin((_Time.y + sin(objectAnchorWS.y * 0.5) + _ScriptControl) * _SwimmingSpeed);
+                half flap = sinT * _SwimmingPower;
+                half zf = (positionOS.z * positionOS.z) - (positionOS.z * _WaveBody);
+                positionOS.x += sin(zf / _SwimmingScale) * flap;
+                positionOS.y += sin(zf / 10.0) * flap * _Wobble;
+                positionOS.y += sin((_Time.y + sin((objectAnchorWS.x + objectAnchorWS.y) * _WaveY * 0.6)) * _WaveYSpeed) * _WaveY;
+                return positionOS;
+            }
+
+            DepthOnlyVaryings DepthOnlyVertex(DepthOnlyAttributes input)
+            {
+                DepthOnlyVaryings output = (DepthOnlyVaryings)0;
+                UNITY_SETUP_INSTANCE_ID(input);
+                UNITY_TRANSFER_INSTANCE_ID(input, output);
+                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
+
+                float3 animatedPositionOS = ApplyFishAnimation(input.positionOS.xyz);
+                VertexPositionInputs positionInputs = GetVertexPositionInputs(animatedPositionOS);
+                output.positionCS = positionInputs.positionCS;
+                return output;
+            }
+
+            half4 DepthOnlyFragment(DepthOnlyVaryings input) : SV_TARGET
+            {
+                UNITY_SETUP_INSTANCE_ID(input);
+                UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
+                return 0;
+            }
+            ENDHLSL
+        }
+
+        // This pass is required by URP's depth/normals prepass paths (including
+        // Depth Priming / Deferred + UniversalForwardOnly materials). It must use
+        // the same animated vertex positions as ForwardLit and DepthOnly.
+        Pass
+        {
+            Name "DepthNormalsOnly"
+            Tags { "LightMode" = "DepthNormalsOnly" }
+
+            ZWrite On
+            ZTest LEqual
+
+            HLSLPROGRAM
+            #pragma target 3.0
+            #pragma vertex DepthNormalsVertex
+            #pragma fragment DepthNormalsFragment
+            #pragma multi_compile_instancing
+
+            #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
+
+            CBUFFER_START(UnityPerMaterial)
+                float4 _Color;
+                float4 _ReflectColor;
+                float4 _SpecColor;
+                float4 _MainTex_ST;
+                float4 _SpecMap_ST;
+                float4 _OcclusionMap_ST;
+                float4 _BumpMap_ST;
+                float4 _BumpMapD_ST;
+                float4 _EmissionTex_ST;
+                half _Saturation;
+                half _Brightness;
+                half _Contrast;
+                half _SpecMapUV;
+                half _Shininess;
+                half _SpecMapInts;
+                half _OcclusionMapUv;
+                half _IntensityOc;
+                half _IntensityNm;
+                half _BumpMapDUV;
+                half _IntensityNmD;
+                half _IntensityRef;
+                half _SaturationRef;
+                half _ContrastRef;
+                half _BiasNormal;
+                half _ScriptControl;
+                half _SwimmingPower;
+                half _SwimmingScale;
+                half _SwimmingSpeed;
+                half _WaveBody;
+                half _Wobble;
+                half _WaveY;
+                half _WaveYSpeed;
+            CBUFFER_END
+
+            struct DepthNormalsAttributes
+            {
+                float4 positionOS : POSITION;
+                float3 normalOS : NORMAL;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+            };
+
+            struct DepthNormalsVaryings
+            {
+                float4 positionCS : SV_POSITION;
+                half3 normalWS : TEXCOORD0;
+                UNITY_VERTEX_INPUT_INSTANCE_ID
+                UNITY_VERTEX_OUTPUT_STEREO
+            };
+
+            float3 ApplyFishAnimation(float3 positionOS)
+            {
+                float3 objectAnchorWS = TransformObjectToWorld(float3(1.0, 1.0, 1.0));
+                half sinT = sin((_Time.y + sin(objectAnchorWS.y * 0.5) + _ScriptControl) * _SwimmingSpeed);
+                half flap = sinT * _SwimmingPower;
+                half zf = (positionOS.z * positionOS.z) - (positionOS.z * _WaveBody);
+                positionOS.x += sin(zf / _SwimmingScale) * flap;
+                positionOS.y += sin(zf / 10.0) * flap * _Wobble;
+                positionOS.y += sin((_Time.y + sin((objectAnchorWS.x + objectAnchorWS.y) * _WaveY * 0.6)) * _WaveYSpeed) * _WaveY;
+                return positionOS;
+            }
+
+            DepthNormalsVaryings DepthNormalsVertex(DepthNormalsAttributes input)
+            {
+                DepthNormalsVaryings output = (DepthNormalsVaryings)0;
+                UNITY_SETUP_INSTANCE_ID(input);
+                UNITY_TRANSFER_INSTANCE_ID(input, output);
+                UNITY_INITIALIZE_VERTEX_OUTPUT_STEREO(output);
+
+                float3 animatedPositionOS = ApplyFishAnimation(input.positionOS.xyz);
+                VertexPositionInputs positionInputs = GetVertexPositionInputs(animatedPositionOS);
+                output.positionCS = positionInputs.positionCS;
+                output.normalWS = TransformObjectToWorldNormal(input.normalOS);
+                return output;
+            }
+
+            half4 DepthNormalsFragment(DepthNormalsVaryings input) : SV_TARGET
+            {
+                UNITY_SETUP_INSTANCE_ID(input);
+                UNITY_SETUP_STEREO_EYE_INDEX_POST_VERTEX(input);
+                half3 normalWS = normalize(input.normalWS);
+                return half4(normalWS * 0.5h + 0.5h, 1.0h);
+            }
+            ENDHLSL
+        }
 
         Pass
         {

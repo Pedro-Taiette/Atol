@@ -1,5 +1,6 @@
 using UnityEngine;
 using UnityEngine.Rendering;
+using UnityEngine.Serialization;
 
 /// <summary>
 /// Drives the underwater fullscreen effect from the real output camera.
@@ -53,6 +54,12 @@ public sealed class OceanUnderwaterController : MonoBehaviour
     [SerializeField, Min(0.1f)] private float fullEffectDepthMeters = 1.5f;
     [SerializeField, Min(0f)] private float transitionSeconds = 0.14f;
 
+    [Header("Preemptive Fog")]
+    [Tooltip("Vertical distance in metres ABOVE the animated water surface where underwater fog starts being applied. Fog reaches full strength at the waterline.")]
+    [SerializeField, FormerlySerializedAs("startApplyingPreemptiveFOV"), Min(0f)] private float startApplyingPreemptiveFog = 1.0f;
+    [Tooltip("How quickly preemptive fog transitions in and out as the camera approaches or leaves the water.")]
+    [SerializeField, FormerlySerializedAs("preemptiveFOVTransitionSeconds"), Min(0f)] private float preemptiveFogTransitionSeconds = 0.12f;
+
     [Header("Exit Transition")]
     [Tooltip("Soft screen blur fades completely after leaving water. Default is half a second.")]
     [SerializeField, Range(0.05f, 1.5f)] private float exitBlurFadeSeconds = 0.5f;
@@ -66,6 +73,10 @@ public sealed class OceanUnderwaterController : MonoBehaviour
     [SerializeField, Range(0f, 2f)] private float causticsStrength = 0.35f;
     [SerializeField, Range(0f, 1f)] private float desaturation = 0.18f;
     [SerializeField, Range(0f, 2f)] private float fogDensity = 0.16f;
+    [Tooltip("Maximum fullscreen fog opacity. Keeps distant fish and other geometry from being completely replaced by fog color.")]
+    [SerializeField, Range(0.1f, 0.98f)] private float maximumFogOpacity = 0.78f;
+    [Tooltip("Debug view: geometry depth is grayscale; pixels with no scene depth (sky/background) are magenta.")]
+    [SerializeField] private bool debugDepthTexture;
     [SerializeField] private Color fogColor = new Color(0.025f, 0.19f, 0.23f, 1f);
     [SerializeField, Range(0f, 1f)] private float vignetteStrength = 0.22f;
     [SerializeField, Range(0f, 5f)] private float causticsSpeed = 0.8f;
@@ -79,6 +90,9 @@ public sealed class OceanUnderwaterController : MonoBehaviour
     private static readonly int DesaturationId = Shader.PropertyToID("_OceanUnderwaterDesaturation");
     private static readonly int FogDensityId = Shader.PropertyToID("_OceanUnderwaterFogDensity");
     private static readonly int FogColorId = Shader.PropertyToID("_OceanUnderwaterFogColor");
+    private static readonly int FogIntensityId = Shader.PropertyToID("_OceanUnderwaterFogIntensity");
+    private static readonly int MaxFogOpacityId = Shader.PropertyToID("_OceanUnderwaterMaxFogOpacity");
+    private static readonly int DepthDebugId = Shader.PropertyToID("_OceanUnderwaterDepthDebug");
     private static readonly int VignetteId = Shader.PropertyToID("_OceanUnderwaterVignette");
     private static readonly int CausticsSpeedId = Shader.PropertyToID("_OceanUnderwaterCausticsSpeed");
     private static readonly int ExitBlurId = Shader.PropertyToID("_OceanUnderwaterExitBlur");
@@ -103,6 +117,11 @@ public sealed class OceanUnderwaterController : MonoBehaviour
     private float intensityVelocity;
     private float exitBlurRemaining;
     private bool hasEnteredWater;
+
+    // Separate fog blend lets fog begin above the water without enabling
+    // tint, refraction, caustics, vignette, or the rest of the underwater look.
+    private float currentPreemptiveFogBlend;
+    private float preemptiveFogVelocity;
 
     public bool IsUnderwater => hasEnteredWater;
     public float CurrentIntensity => currentIntensity;
@@ -143,6 +162,8 @@ public sealed class OceanUnderwaterController : MonoBehaviour
         intensityVelocity = 0f;
         exitBlurRemaining = 0f;
         hasEnteredWater = false;
+        currentPreemptiveFogBlend = 0f;
+        preemptiveFogVelocity = 0f;
 
         RenderPipelineManager.beginCameraRendering += OnBeginCameraRendering;
         SetNeutralGlobals();
@@ -156,6 +177,8 @@ public sealed class OceanUnderwaterController : MonoBehaviour
         intensityVelocity = 0f;
         exitBlurRemaining = 0f;
         hasEnteredWater = false;
+        currentPreemptiveFogBlend = 0f;
+        preemptiveFogVelocity = 0f;
         cameraQueriesInFlight = 0;
         hasSurfaceSample = false;
         estimatedVerticalWaveVelocity = 0f;
@@ -186,6 +209,8 @@ public sealed class OceanUnderwaterController : MonoBehaviour
         surfaceHeightSmoothing = Mathf.Clamp(surfaceHeightSmoothing, 0f, 0.25f);
         fullEffectDepthMeters = Mathf.Max(0.1f, fullEffectDepthMeters);
         transitionSeconds = Mathf.Max(0f, transitionSeconds);
+        startApplyingPreemptiveFog = Mathf.Max(0f, startApplyingPreemptiveFog);
+        preemptiveFogTransitionSeconds = Mathf.Max(0f, preemptiveFogTransitionSeconds);
         exitBlurFadeSeconds = Mathf.Clamp(exitBlurFadeSeconds, 0.05f, 1.5f);
         exitBlurRadiusPixels = Mathf.Clamp(exitBlurRadiusPixels, 0f, 5f);
         tintStrength = Mathf.Clamp(tintStrength, 0f, 2f);
@@ -193,6 +218,7 @@ public sealed class OceanUnderwaterController : MonoBehaviour
         causticsStrength = Mathf.Clamp(causticsStrength, 0f, 2f);
         desaturation = Mathf.Clamp01(desaturation);
         fogDensity = Mathf.Clamp(fogDensity, 0f, 2f);
+        maximumFogOpacity = Mathf.Clamp(maximumFogOpacity, 0.1f, 0.98f);
         vignetteStrength = Mathf.Clamp01(vignetteStrength);
         causticsSpeed = Mathf.Clamp(causticsSpeed, 0f, 5f);
     }
@@ -387,7 +413,32 @@ public sealed class OceanUnderwaterController : MonoBehaviour
 
         if (hasReliableSurface)
             hasInitializedFromReliableSurface = true;
+
         float signedDepth = filteredSurfaceHeight - renderingCamera.transform.position.y;
+
+        // Apply fog based on proximity to the animated water surface, independently
+        // of the debounced underwater state. This starts the fog while the camera
+        // is still above water without activating the other underwater effects.
+        float targetPreemptiveFogBlend = 0f;
+        if (hasReliableSurface)
+        {
+            if (signedDepth >= 0f)
+            {
+                // At or below the waterline, preemptive fog is at full strength.
+                targetPreemptiveFogBlend = 1f;
+            }
+            else if (startApplyingPreemptiveFog > 0f)
+            {
+                // signedDepth is negative above the surface. Blend from zero at
+                // the configured starting height to full fog at the waterline.
+                float proximity = Mathf.Clamp01(
+                    1f + signedDepth / startApplyingPreemptiveFog);
+                targetPreemptiveFogBlend = Mathf.SmoothStep(0f, 1f, proximity);
+            }
+        }
+
+        UpdatePreemptiveFog(targetPreemptiveFogBlend, deltaTime);
+
         bool wasUnderwater = hasEnteredWater;
 
         if (!hasEnteredWater)
@@ -469,7 +520,29 @@ public sealed class OceanUnderwaterController : MonoBehaviour
                 exitBlurRemaining / Mathf.Max(exitBlurFadeSeconds, 0.05f))
             : 0f;
 
-        ApplyGlobals(currentIntensity, depthBelowSurface, exitBlur);
+        ApplyGlobals(currentIntensity, depthBelowSurface, exitBlur, currentPreemptiveFogBlend);
+    }
+
+    private void UpdatePreemptiveFog(float targetBlend, float deltaTime)
+    {
+        targetBlend = Mathf.Clamp01(targetBlend);
+
+        if (preemptiveFogTransitionSeconds <= 0f)
+        {
+            currentPreemptiveFogBlend = targetBlend;
+            preemptiveFogVelocity = 0f;
+            return;
+        }
+
+        currentPreemptiveFogBlend = Mathf.SmoothDamp(
+            currentPreemptiveFogBlend,
+            targetBlend,
+            ref preemptiveFogVelocity,
+            preemptiveFogTransitionSeconds,
+            Mathf.Infinity,
+            deltaTime);
+
+        currentPreemptiveFogBlend = Mathf.Clamp01(currentPreemptiveFogBlend);
     }
 
     private bool TryGetCurrentSurfaceHeight(out float height)
@@ -541,16 +614,22 @@ public sealed class OceanUnderwaterController : MonoBehaviour
         return fallbackWaterLevelY;
     }
 
-    private void ApplyGlobals(float intensity, float depth, float exitBlur)
+    private void ApplyGlobals(float intensity, float depth, float exitBlur, float preemptiveFogBlend)
     {
         Shader.SetGlobalFloat(IntensityId, Mathf.Clamp01(intensity));
         Shader.SetGlobalFloat(DepthId, depth);
+        // The shader should use this value for its fog term only. Keeping it
+        // separate from _OceanUnderwaterIntensity prevents preemptive fog from
+        // activating tint, refraction, caustics, vignette, or other effects.
+        Shader.SetGlobalFloat(FogIntensityId, Mathf.Clamp01(Mathf.Max(intensity, preemptiveFogBlend)));
         Shader.SetGlobalColor(TintId, waterTint);
         Shader.SetGlobalFloat(TintStrengthId, tintStrength);
         Shader.SetGlobalFloat(RefractionId, refractionStrength);
         Shader.SetGlobalFloat(CausticsId, causticsStrength);
         Shader.SetGlobalFloat(DesaturationId, desaturation);
         Shader.SetGlobalFloat(FogDensityId, fogDensity);
+        Shader.SetGlobalFloat(MaxFogOpacityId, maximumFogOpacity);
+        Shader.SetGlobalFloat(DepthDebugId, debugDepthTexture ? 1f : 0f);
         Shader.SetGlobalColor(FogColorId, fogColor);
         Shader.SetGlobalFloat(VignetteId, vignetteStrength);
         Shader.SetGlobalFloat(CausticsSpeedId, causticsSpeed);
@@ -567,6 +646,9 @@ public sealed class OceanUnderwaterController : MonoBehaviour
     {
         Shader.SetGlobalFloat(IntensityId, 0f);
         Shader.SetGlobalFloat(DepthId, 0f);
+        Shader.SetGlobalFloat(FogIntensityId, 0f);
+        Shader.SetGlobalFloat(MaxFogOpacityId, 0.78f);
+        Shader.SetGlobalFloat(DepthDebugId, 0f);
         Shader.SetGlobalFloat(ExitBlurId, 0f);
         Shader.SetGlobalFloat(ExitBlurRadiusId, 0f);
     }
