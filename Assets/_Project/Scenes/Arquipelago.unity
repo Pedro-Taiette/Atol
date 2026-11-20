@@ -635,21 +635,53 @@ PrefabInstance:
     serializedVersion: 3
     m_TransformParent: {fileID: 1506322368}
     m_Modifications:
+    - target: {fileID: 3677732437614575717, guid: 380e869112d5086468a3a3992e91109d, type: 3}
+      propertyPath: m_Radius
+      value: 1.4
+      objectReference: {fileID: 0}
+    - target: {fileID: 3677732437614575717, guid: 380e869112d5086468a3a3992e91109d, type: 3}
+      propertyPath: m_Center.z
+      value: 0.72
+      objectReference: {fileID: 0}
     - target: {fileID: 4622948576541377396, guid: 380e869112d5086468a3a3992e91109d, type: 3}
       propertyPath: m_Name
       value: Shark
       objectReference: {fileID: 0}
+    - target: {fileID: 4622948576541377396, guid: 380e869112d5086468a3a3992e91109d, type: 3}
+      propertyPath: m_Layer
+      value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 4622948576541377396, guid: 380e869112d5086468a3a3992e91109d, type: 3}
+      propertyPath: m_IsActive
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 6346932177312659368, guid: 380e869112d5086468a3a3992e91109d, type: 3}
+      propertyPath: 'm_Materials.Array.data[0]'
+      value: 
+      objectReference: {fileID: 2100000, guid: cb7e549d37e386942a62c93932c528e0, type: 2}
+    - target: {fileID: 8535265655307596135, guid: 380e869112d5086468a3a3992e91109d, type: 3}
+      propertyPath: m_LocalScale.x
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8535265655307596135, guid: 380e869112d5086468a3a3992e91109d, type: 3}
+      propertyPath: m_LocalScale.y
+      value: 1
+      objectReference: {fileID: 0}
+    - target: {fileID: 8535265655307596135, guid: 380e869112d5086468a3a3992e91109d, type: 3}
+      propertyPath: m_LocalScale.z
+      value: 1
+      objectReference: {fileID: 0}
     - target: {fileID: 8535265655307596135, guid: 380e869112d5086468a3a3992e91109d, type: 3}
       propertyPath: m_LocalPosition.x
-      value: -2.4459763
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 8535265655307596135, guid: 380e869112d5086468a3a3992e91109d, type: 3}
       propertyPath: m_LocalPosition.y
-      value: -4.61
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 8535265655307596135, guid: 380e869112d5086468a3a3992e91109d, type: 3}
       propertyPath: m_LocalPosition.z
-      value: 20.781818
+      value: 0
       objectReference: {fileID: 0}
     - target: {fileID: 8535265655307596135, guid: 380e869112d5086468a3a3992e91109d, type: 3}
       propertyPath: m_LocalRotation.w
@@ -679,11 +711,21 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 8535265655307596135, guid: 380e869112d5086468a3a3992e91109d, type: 3}
+      propertyPath: m_ConstrainProportionsScale
+      value: 1
+      objectReference: {fileID: 0}
     m_RemovedComponents:
     - {fileID: 3677732437614575716, guid: 380e869112d5086468a3a3992e91109d, type: 3}
     m_RemovedGameObjects: []
     m_AddedGameObjects: []
-    m_AddedComponents: []
+    m_AddedComponents:
+    - targetCorrespondingSourceObject: {fileID: 4622948576541377396, guid: 380e869112d5086468a3a3992e91109d, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1724544720}
+    - targetCorrespondingSourceObject: {fileID: 4622948576541377396, guid: 380e869112d5086468a3a3992e91109d, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 1724544724}
   m_SourcePrefab: {fileID: 100100000, guid: 380e869112d5086468a3a3992e91109d, type: 3}
 --- !u!4 &317886781 stripped
 Transform:
@@ -2455,7 +2497,7 @@ GameObject:
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
   m_StaticEditorFlags: 0
-  m_IsActive: 0
+  m_IsActive: 1
 --- !u!4 &1143917827
 Transform:
   m_ObjectHideFlags: 0
@@ -4107,6 +4149,91 @@ MonoBehaviour:
   m_EditorClassIdentifier: Assembly-CSharp::WorldStateController
   Decay: 0
   SpectralOcean: {fileID: 746659107}
+--- !u!1 &1724544719 stripped
+GameObject:
+  m_CorrespondingSourceObject: {fileID: 4622948576541377396, guid: 380e869112d5086468a3a3992e91109d, type: 3}
+  m_PrefabInstance: {fileID: 317886780}
+  m_PrefabAsset: {fileID: 0}
+--- !u!114 &1724544720
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1724544719}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: b71c7c46270245e8a3de21ded21e76b6, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::Assets._Project.Features.WaterEffects.InanimateFoamEmitter
+  sphereCollider: {fileID: 1724544721}
+  ocean: {fileID: 746659107}
+  sampleInterval: 0.1
+  maximumSampleAge: 0.4
+  sampleTimeout: 0.5
+  maximumReadbackDrift: 1.25
+  maximumQueryError: 0.25
+  allowMeanWaterLevelFallback: 1
+  aboveSurfaceTolerance: 0.12
+  deepSubmergeFraction: 0.72
+  contactFadeDistance: 0.12
+  minimumWakeSpeed: 0.3
+  wakeSpacing: 0.7
+  wakeLength: 6
+  wakeRadius: 0.22
+  wakeStrength: 0.22
+  wakeOriginOffset: 0.8
+  wakeHalfAngle: 19.47
+  maximumMovementStep: 3
+  maximumWakePacketsPerFrame: 3
+  emitFoam: 1
+  foamRadius: 0.13
+  foamStrengthPerStamp: 0.025
+  foamInterval: 0.03
+  emitWaterEntryImpactRipples: 1
+  impactArmingClearance: 0.12
+  minimumImpactFallDuration: 0.1
+  minimumImpactDownwardSpeed: 0.55
+  fullImpactDownwardSpeed: 4
+  maximumImpactFallDuration: 2.2
+  impactRippleStrength: 0.55
+  impactRippleSizeScale: 0.4
+  impactRippleFoam: 0.035
+  impactRippleCooldown: 0.6
+  emitJumpTakeoffRipple: 1
+  minimumJumpTakeoffSpeed: 0.45
+  jumpTakeoffRippleRadius: 2.8
+  jumpTakeoffRippleStrength: 0.32
+  jumpTakeoffRippleLifetime: 2.8
+  jumpTakeoffRippleCooldown: 0.45
+  drawWaterContactGizmo: 0
+--- !u!135 &1724544721 stripped
+SphereCollider:
+  m_CorrespondingSourceObject: {fileID: 3677732437614575717, guid: 380e869112d5086468a3a3992e91109d, type: 3}
+  m_PrefabInstance: {fileID: 317886780}
+  m_PrefabAsset: {fileID: 0}
+--- !u!95 &1724544724
+Animator:
+  serializedVersion: 7
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1724544719}
+  m_Enabled: 1
+  m_Avatar: {fileID: 0}
+  m_Controller: {fileID: 0}
+  m_CullingMode: 0
+  m_UpdateMode: 0
+  m_ApplyRootMotion: 0
+  m_LinearVelocityBlending: 0
+  m_StabilizeFeet: 0
+  m_AnimatePhysics: 0
+  m_WarningMessage: 
+  m_HasTransformHierarchy: 1
+  m_AllowConstantClipSamplingOptimization: 1
+  m_KeepAnimatorStateOnDisable: 0
+  m_WriteDefaultValuesOnDisable: 0
 --- !u!1001 &1771252086
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -4208,31 +4335,31 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 3276620587067567657, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
       propertyPath: m_LocalPosition.x
-      value: -13.1
+      value: 81.65
       objectReference: {fileID: 0}
     - target: {fileID: 3276620587067567657, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
       propertyPath: m_LocalPosition.y
-      value: 38.84
+      value: 21.87
       objectReference: {fileID: 0}
     - target: {fileID: 3276620587067567657, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
       propertyPath: m_LocalPosition.z
-      value: -140.5
+      value: -70.93
       objectReference: {fileID: 0}
     - target: {fileID: 3276620587067567657, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
       propertyPath: m_LocalRotation.w
-      value: 1
+      value: -0.25881594
       objectReference: {fileID: 0}
     - target: {fileID: 3276620587067567657, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
       propertyPath: m_LocalRotation.x
-      value: 0
+      value: -0
       objectReference: {fileID: 0}
     - target: {fileID: 3276620587067567657, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
       propertyPath: m_LocalRotation.y
-      value: 0
+      value: 0.96592665
       objectReference: {fileID: 0}
     - target: {fileID: 3276620587067567657, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
       propertyPath: m_LocalRotation.z
-      value: 0
+      value: -0
       objectReference: {fileID: 0}
     - target: {fileID: 3276620587067567657, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
       propertyPath: m_LocalEulerAnglesHint.x
@@ -4240,7 +4367,7 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 3276620587067567657, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
       propertyPath: m_LocalEulerAnglesHint.y
-      value: 0
+      value: 210
       objectReference: {fileID: 0}
     - target: {fileID: 3276620587067567657, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
       propertyPath: m_LocalEulerAnglesHint.z
@@ -4250,33 +4377,41 @@ PrefabInstance:
       propertyPath: ReferenceTransform
       value: 
       objectReference: {fileID: 1888898776}
+    - target: {fileID: 6113607378039255195, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
+      propertyPath: VerticalAxis.Value
+      value: 16.4
+      objectReference: {fileID: 0}
+    - target: {fileID: 6113607378039255195, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
+      propertyPath: HorizontalAxis.Value
+      value: -160.4
+      objectReference: {fileID: 0}
     - target: {fileID: 6981162543374608517, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
       propertyPath: m_LocalPosition.x
-      value: 0.5
+      value: 1.2149416
       objectReference: {fileID: 0}
     - target: {fileID: 6981162543374608517, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
       propertyPath: m_LocalPosition.y
-      value: 2.2799988
+      value: 2.157093
       objectReference: {fileID: 0}
     - target: {fileID: 6981162543374608517, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
       propertyPath: m_LocalPosition.z
-      value: -4
+      value: -3.8955443
       objectReference: {fileID: 0}
     - target: {fileID: 6981162543374608517, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
       propertyPath: m_LocalRotation.w
-      value: 0.9945248
+      value: 0.991784
       objectReference: {fileID: 0}
     - target: {fileID: 6981162543374608517, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
       propertyPath: m_LocalRotation.x
-      value: 0.104501374
+      value: 0.090282105
       objectReference: {fileID: 0}
     - target: {fileID: 6981162543374608517, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
       propertyPath: m_LocalRotation.y
-      value: -2.5470192e-11
+      value: -0.09025628
       objectReference: {fileID: 0}
     - target: {fileID: 6981162543374608517, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
       propertyPath: m_LocalRotation.z
-      value: 2.6399165e-12
+      value: 0.00821603
       objectReference: {fileID: 0}
     - target: {fileID: 7266475739418501036, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
       propertyPath: Body
@@ -4299,13 +4434,37 @@ PrefabInstance:
       value: 5.5
       objectReference: {fileID: 0}
     - target: {fileID: 7266475739418501036, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
+      propertyPath: SurfaceSpring
+      value: 0.91
+      objectReference: {fileID: 0}
+    - target: {fileID: 7266475739418501036, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
       propertyPath: VerticalDamping
       value: 0
+      objectReference: {fileID: 0}
+    - target: {fileID: 7266475739418501036, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
+      propertyPath: TargetSubmersion
+      value: 0.62
+      objectReference: {fileID: 0}
+    - target: {fileID: 7266475739418501036, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
+      propertyPath: AssumedBodyHeight
+      value: 1
       objectReference: {fileID: 0}
     - target: {fileID: 7266475739418501036, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
       propertyPath: ReferenceTransform
       value: 
       objectReference: {fileID: 1888898776}
+    - target: {fileID: 7266475739418501036, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
+      propertyPath: WaveEjectionHeight
+      value: 0.55
+      objectReference: {fileID: 0}
+    - target: {fileID: 7266475739418501036, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
+      propertyPath: AssumedBodyCenterOffset
+      value: 0.5
+      objectReference: {fileID: 0}
+    - target: {fileID: 7266475739418501036, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
+      propertyPath: MaximumDownwardAcceleration
+      value: 2
+      objectReference: {fileID: 0}
     - target: {fileID: 8657221663229615731, guid: 5a117f51f1bbdf345bcfc0058e190bd0, type: 3}
       propertyPath: boat
       value: 
@@ -4686,6 +4845,10 @@ PlayableDirector:
     value: {fileID: 495853303}
   - key: {fileID: 3767897731995353193, guid: 0386d0ad20741fd40a24fda02eef9c52, type: 2}
     value: {fileID: 1535505300}
+  - key: {fileID: 4630476243380906014, guid: 0386d0ad20741fd40a24fda02eef9c52, type: 2}
+    value: {fileID: 1724544724}
+  - key: {fileID: -7533133220584161549, guid: 0386d0ad20741fd40a24fda02eef9c52, type: 2}
+    value: {fileID: 1143917826}
   m_ExposedReferences:
     m_References: []
 --- !u!114 &1870548700
@@ -4720,6 +4883,18 @@ MonoBehaviour:
           m_StringArgument: 
           m_BoolArgument: 0
         m_CallState: 2
+      - m_Target: {fileID: 326012800}
+        m_TargetAssemblyTypeName: UnityEngine.GameObject, UnityEngine
+        m_MethodName: SetActive
+        m_Mode: 6
+        m_Arguments:
+          m_ObjectArgument: {fileID: 0}
+          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
+          m_IntArgument: 0
+          m_FloatArgument: 0
+          m_StringArgument: 
+          m_BoolArgument: 0
+        m_CallState: 2
   OnCutsceneEnded:
     m_PersistentCalls:
       m_Calls:
@@ -4736,6 +4911,30 @@ MonoBehaviour:
           m_BoolArgument: 0
         m_CallState: 2
       - m_Target: {fileID: 1143917826}
+        m_TargetAssemblyTypeName: UnityEngine.GameObject, UnityEngine
+        m_MethodName: SetActive
+        m_Mode: 6
+        m_Arguments:
+          m_ObjectArgument: {fileID: 0}
+          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
+          m_IntArgument: 0
+          m_FloatArgument: 0
+          m_StringArgument: 
+          m_BoolArgument: 0
+        m_CallState: 2
+      - m_Target: {fileID: 326012800}
+        m_TargetAssemblyTypeName: UnityEngine.GameObject, UnityEngine
+        m_MethodName: SetActive
+        m_Mode: 6
+        m_Arguments:
+          m_ObjectArgument: {fileID: 0}
+          m_ObjectArgumentAssemblyTypeName: UnityEngine.Object, UnityEngine
+          m_IntArgument: 0
+          m_FloatArgument: 0
+          m_StringArgument: 
+          m_BoolArgument: 1
+        m_CallState: 2
+      - m_Target: {fileID: 1506322367}
         m_TargetAssemblyTypeName: UnityEngine.GameObject, UnityEngine
         m_MethodName: SetActive
         m_Mode: 6
@@ -4903,7 +5102,7 @@ Camera:
     height: 1
   near clip plane: 0.01
   far clip plane: 1000
-  field of view: 70
+  field of view: 40
   orthographic: 0
   orthographic size: 5
   m_Depth: -1
@@ -4929,8 +5128,8 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1888898773}
   serializedVersion: 2
-  m_LocalRotation: {x: 0.104501374, y: -2.547406e-11, z: 2.6767301e-12, w: 0.9945248}
-  m_LocalPosition: {x: -12.6, y: 41.12, z: -144.5}
+  m_LocalRotation: {x: 0, y: -0.9198884, z: 0, w: 0.39218032}
+  m_LocalPosition: {x: 192.36, y: 15.76, z: -27.54}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -5025,14 +5224,14 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::OceanUnderwaterController
   settingsVersion: 2
-  outputCamera: {fileID: 1888898775}
+  outputCamera: {fileID: 0}
   waterSurfaceReference: {fileID: 0}
-  ocean: {fileID: 746659107}
+  ocean: {fileID: 0}
   fallbackWaterLevelY: 0
-  enterDepthMeters: 0
-  exitAboveSurfaceMeters: 0.05
-  enterConfirmationSeconds: 0.08
-  exitConfirmationSeconds: 0.5
+  enterDepthMeters: 0.16
+  exitAboveSurfaceMeters: 0.08
+  enterConfirmationSeconds: 0.14
+  exitConfirmationSeconds: 0.1
   maximumSurfaceSampleAge: 0.28
   staleSurfaceFallbackFade: 0.2
   surfacePredictionSeconds: 0.22
@@ -5043,16 +5242,20 @@ MonoBehaviour:
   maximumSamplePositionDrift: 30
   maximumConcurrentCameraQueries: 4
   surfaceHeightSmoothing: 0.025
-  fullEffectDepthMeters: 0.1
-  transitionSeconds: 0.18
-  exitBlurFadeSeconds: 1.5
+  fullEffectDepthMeters: 1.5
+  transitionSeconds: 0.14
+  startApplyingPreemptiveFog: 0.1
+  preemptiveFogTransitionSeconds: 0.05
+  exitBlurFadeSeconds: 0.5
   exitBlurRadiusPixels: 2.5
   waterTint: {r: 0.12, g: 0.48, b: 0.53, a: 1}
   tintStrength: 0.72
-  refractionStrength: 0.0086
+  refractionStrength: 0.0035
   causticsStrength: 0.35
   desaturation: 0.18
-  fogDensity: 0.099
+  fogDensity: 0.16
+  maximumFogOpacity: 0.78
+  debugDepthTexture: 0
   fogColor: {r: 0.025, g: 0.19, b: 0.23, a: 1}
   vignetteStrength: 0.22
   causticsSpeed: 0.8
