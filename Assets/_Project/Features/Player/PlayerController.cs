@@ -27,6 +27,7 @@ public sealed class PlayerController : MonoBehaviour
 
     [Header("HUD")]
     public StatusBarUI StaminaBar;
+    public StatusBarUI HealthBar;
 
     [Header("Boat Boarding")]
     [Tooltip("Optional CharacterController reference. If empty, one is searched on this object.")]
@@ -82,6 +83,7 @@ public sealed class PlayerController : MonoBehaviour
 
     /// <summary>Stamina pool shared with SwimmingMovement (auto-added if missing on older prefabs).</summary>
     public StaminaComponent Stamina { get; private set; }
+    public HealthComponent Health { get; private set; }
 
     public IMovement ActiveMovement => activeMovement;
     public bool IsAboardBoat => isAboardBoat;
@@ -104,6 +106,18 @@ public sealed class PlayerController : MonoBehaviour
         if (StaminaBar == null)
             StaminaBar = gameObject.AddComponent<StatusBarUI>();
         StaminaBar.Bind(Stamina, "Stamina");
+
+        Health = GetComponent<HealthComponent>();
+        if (Health == null)
+            Health = gameObject.AddComponent<HealthComponent>();
+
+        if (HealthBar == null)
+        {
+            HealthBar = gameObject.AddComponent<StatusBarUI>();
+            HealthBar.FillColor = new Color(0.85f, 0.2f, 0.2f, 1f);
+            HealthBar.Offset = new Vector2(28f, 52f);
+        }
+        HealthBar.Bind(Health, "Health");
 
         boatControlHint = GetComponent<BoatControlHintUI>();
         if (boatControlHint == null)
