@@ -1067,7 +1067,7 @@ public sealed class SpectralOceanFFT : MonoBehaviour
                     GpuSurfaceQueryResult gpu = results[resultIndex];
                     bool valid = gpu.displacement.w > 0.5f &&
                         IsFinite(gpu.displacement) && IsFinite(gpu.normal) &&
-                        IsFinite(gpu.lattice) && gpu.lattice.z <= 0.25f;
+                        IsFinite(gpu.lattice) && gpu.lattice.z <= 1.0f;
                     Vector3 basePosition = slice.query.positions[i];
                     Vector3 displacement = valid
                         ? new Vector3(gpu.displacement.x, gpu.displacement.y, gpu.displacement.z)

@@ -993,7 +993,7 @@ void SampleSurface(uint3 id : SV_DispatchThreadID)
     // a neighbouring crest or trough and report that height under the swimmer.
     // The bilinear displacement maps are continuous, so a successful inverse
     // should converge close to the requested world XZ.
-    bool valid = bestResidualSqr <= 0.0625 &&
+    bool valid = bestResidualSqr <= 1.0 &&
         all(isfinite(bestDisplacement)) && all(isfinite(bestNormal)) &&
         dot(bestNormal, bestNormal) > 1e-6;
 
