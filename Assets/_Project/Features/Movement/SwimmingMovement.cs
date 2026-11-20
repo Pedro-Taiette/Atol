@@ -135,13 +135,35 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
     [Min(0.05f)] public float MaximumSurfaceSampleAge = 0.35f;
     [Range(0f, 1f)] public float WaveVelocitySmoothing = 0.3f;
     [Tooltip("Reject inverse-mapped samples whose horizontal solver residual exceeds this distance.")]
-    [Min(0.01f)] public float MaximumSurfaceQueryError = 0.25f;
-    [Tooltip("Maximum tangent-plane slope used to move an asynchronous sample to the player's current XZ. Matches OceanBuoyancy.")]
-    [Min(0.1f)] public float MaximumSurfaceSampleSlope = WaterSurfaceSampleUtility.DefaultMaximumSlope;
-    [Tooltip("Maximum tangent-plane height correction for player movement between query and readback. Matches OceanBuoyancy.")]
-    [Min(0f)] public float MaximumSurfaceHeightCorrection = WaterSurfaceSampleUtility.DefaultMaximumHeightCorrection;
-    [Tooltip("Reject a delayed sample only if the player has moved beyond the range supported by the boat's tangent-plane correction.")]
-    [Min(0.1f)] public float MaximumSurfaceQueryDrift = 5f;
+    [Min(0.01f)] public float MaximumSurfaceQueryError = 1.0f;
+    [Tooltip("Discard delayed FFT samples when the player has moved this far from the exact queried world position.")]
+    [Min(0.05f)] public float MaximumSurfaceQueryDrift = 0.35f;
+
+    [Header("Wave Riding (surface tracker)")]
+    [Tooltip("The swimmer rides the water in the water's own moving frame: a time-stamped tracker interpolates/extrapolates the async FFT samples, and the buoyancy spring acts on motion RELATIVE to the surface. Off = legacy low-pass follow (cannot keep up with real waves).")]
+    public bool RideWaveSurface = true;
+    [Tooltip("Fraction of the tracked surface vertical velocity the swimmer matches. 1 = rides the wave exactly.")]
+    [Range(0f, 1.5f)] public float RideVelocityFollow = 1f;
+    [Tooltip("Spring (1/s^2) pulling the body toward its floating height relative to the moving surface.")]
+    [Min(0f)] public float RideStiffness = 22f;
+    [Tooltip("Damping (1/s) of motion relative to the moving surface. About 2*sqrt(RideStiffness) is critically damped.")]
+    [Min(0f)] public float RideDamping = 9.4f;
+    [Tooltip("Time constant (s) for smoothing the surface velocity estimated from consecutive samples.")]
+    [Range(0.02f, 0.6f)] public float SurfaceVelocitySmoothTime = 0.12f;
+    [Tooltip("Upper bound (m/s) for the estimated vertical speed of the water surface; rejects outlier samples.")]
+    [Min(1f)] public float MaximumTrackedSurfaceSpeed = 14f;
+    [Tooltip("When a sample arrives, how much of the error between the tracker and the (latency-compensated) sample is corrected at once.")]
+    [Range(0.1f, 1f)] public float SurfaceTrackerCorrection = 0.65f;
+    [Tooltip("Tangent-plane slope limit used to move a delayed sample to the swimmer's current XZ.")]
+    [Range(0.5f, 8f)] public float SurfaceTrackSlopeLimit = 2f;
+    [Tooltip("Largest tangent-plane height correction (m) applied to a delayed sample.")]
+    [Range(0.05f, 3f)] public float SurfaceTrackCorrectionLimit = 0.6f;
+    [Tooltip("If the tracker and a fresh sample disagree by more than this (m), the tracker snaps to the sample.")]
+    [Min(0.2f)] public float SurfaceTrackerSnapDistance = 2f;
+    [Tooltip("Seconds over which the surface target eases back to mean sea level after samples have been lost for longer than the hold time.")]
+    [Min(0.5f)] public float SurfaceLostReturnTime = 4f;
+    [Tooltip("Show a small on-screen readout of surface sampling health (accepted/rejected samples, age, tracked height/velocity).")]
+    public bool ShowSurfaceDebug;
 
     [Header("Stable Surface Following")]
     [Tooltip("Smooths the local water height before it becomes the swimmer's buoyancy target.")]
@@ -175,13 +197,32 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
     private bool sampleRequestPending;
     private int sampleGeneration;
 
+    // Surface tracker state (RideWaveSurface).
+    private float trackedHeight;
+    private float trackedVelocity;
+    private bool hasTracker;
+    private bool hasPrevMeasurement;
+    private Vector2 trackedSlope;          // d(height)/d(x,z) from the newest sample normal
+    private Vector2 lastTrackXZ;
+    private bool hasTrackXZ;
+    private SpectralOceanFFT.SurfaceSample prevMeasurement;
+    private float lastIngestRealtime = -1000f;
+    private int acceptedSampleCount;
+    private int rejectedInvalidCount;
+    private int rejectedErrorCount;
+    private int rejectedDriftCount;
+    private int rejectedAgeCount;
+
+    /// <summary>Tracked (latency-compensated, dead-reckoned) water height under the swimmer.</summary>
+    public float TrackedSurfaceHeight => trackedHeight;
+    /// <summary>Tracked vertical speed of the water surface under the swimmer, m/s.</summary>
+    public float TrackedSurfaceVelocity => trackedVelocity;
+    /// <summary>Seconds since the newest accepted surface sample was simulated.</summary>
+    public float SurfaceSampleAge => hasSurfaceSample ? Time.realtimeSinceStartup - sampledSurfaceTime : float.PositiveInfinity;
+
     private Vector2 sampledLattice;
     private Vector3 sampledSurfaceQueryPosition;
     private float sampledSurfaceQueryError = float.PositiveInfinity;
-    private float lastRawSurfaceHeight;
-    private float lastSurfaceHeightCorrection;
-    private Vector3 lastSurfaceSampleNormal = Vector3.up;
-    private Vector3 lastSurfaceRequestPosition;
     private Vector2 driftOffset;
     private Vector2 driftVelocity;
     private float driftExposure = 1f;
@@ -218,27 +259,6 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
     public float CurrentBuoyancyInput => buoyancyInput;
     public float LastSurfaceQueryErrorMeters => sampledSurfaceQueryError;
     public Vector3 LastSurfaceQueryPosition => sampledSurfaceQueryPosition;
-    public float LastRawSurfaceHeight => lastRawSurfaceHeight;
-    public float LastSurfaceHeightCorrection => lastSurfaceHeightCorrection;
-    public float LastFilteredSurfaceHeight => smoothedSurfaceHeight;
-    public Vector3 LastSurfaceSampleNormal => lastSurfaceSampleNormal;
-    public Vector3 LastSurfaceRequestPosition => lastSurfaceRequestPosition;
-
-    [ContextMenu("Log Surface Sampling Diagnostics")]
-    private void LogSurfaceSamplingDiagnostics()
-    {
-        float sampleAge = hasSurfaceSample
-            ? Time.realtimeSinceStartup - sampledSurfaceTime
-            : float.PositiveInfinity;
-        Debug.Log(
-            $"Swimming surface sample | valid={hasSurfaceSample} age={sampleAge:F3}s " +
-            $"requestXZ=({lastSurfaceRequestPosition.x:F2}, {lastSurfaceRequestPosition.z:F2}) " +
-            $"acceptedXZ=({sampledSurfaceQueryPosition.x:F2}, {sampledSurfaceQueryPosition.z:F2}) " +
-            $"rawY={lastRawSurfaceHeight:F3} correction={lastSurfaceHeightCorrection:F3} " +
-            $"correctedY={sampledSurfaceHeight:F3} filteredY={smoothedSurfaceHeight:F3} " +
-            $"normal={lastSurfaceSampleNormal} queryError={sampledSurfaceQueryError:F3}m",
-            this);
-    }
     /// <summary>True during the jump wind-up, the hop itself and a short landing grace.</summary>
     public bool IsHopping => jumpWindupTimer >= 0f || hopAirborne ||
                              Time.time - hopLandedTime < JumpLandingGrace;
@@ -293,14 +313,15 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
         waveEjectionTimer = 0f;
         hasSmoothedSurfaceHeight = false;
         hasSurfaceSample = false;
+        hasTracker = false;
+        hasPrevMeasurement = false;
+        hasTrackXZ = false;
+        trackedVelocity = 0f;
+        lastIngestRealtime = -1000f;
         sampledSurfaceTime = -1000f;
         sampledLattice = Vector2.zero;
         sampledSurfaceQueryPosition = Vector3.zero;
         sampledSurfaceQueryError = float.PositiveInfinity;
-        lastRawSurfaceHeight = 0f;
-        lastSurfaceHeightCorrection = 0f;
-        lastSurfaceSampleNormal = Vector3.up;
-        lastSurfaceRequestPosition = Vector3.zero;
         surfaceHeightSmoothVelocity = 0f;
         filteredSurfaceVerticalVelocity = 0f;
         SetRigidbodyGravityControlled(false);
@@ -333,9 +354,14 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
         SurfaceSampleInterval = Mathf.Max(0.02f, SurfaceSampleInterval);
         MaximumSurfaceSampleAge = Mathf.Max(0.05f, MaximumSurfaceSampleAge);
         MaximumSurfaceQueryError = Mathf.Max(0.01f, MaximumSurfaceQueryError);
-        MaximumSurfaceSampleSlope = Mathf.Max(0.1f, MaximumSurfaceSampleSlope);
-        MaximumSurfaceHeightCorrection = Mathf.Max(0f, MaximumSurfaceHeightCorrection);
-        MaximumSurfaceQueryDrift = Mathf.Max(0.1f, MaximumSurfaceQueryDrift);
+        MaximumSurfaceQueryDrift = Mathf.Max(0.05f, MaximumSurfaceQueryDrift);
+        RideStiffness = Mathf.Max(0f, RideStiffness);
+        RideDamping = Mathf.Max(0f, RideDamping);
+        SurfaceVelocitySmoothTime = Mathf.Clamp(SurfaceVelocitySmoothTime, 0.02f, 0.6f);
+        MaximumTrackedSurfaceSpeed = Mathf.Max(1f, MaximumTrackedSurfaceSpeed);
+        SurfaceTrackerCorrection = Mathf.Clamp(SurfaceTrackerCorrection, 0.1f, 1f);
+        SurfaceTrackerSnapDistance = Mathf.Max(0.2f, SurfaceTrackerSnapDistance);
+        SurfaceLostReturnTime = Mathf.Max(0.5f, SurfaceLostReturnTime);
         SurfaceHeightSmoothTime = Mathf.Clamp(SurfaceHeightSmoothTime, 0.04f, 0.5f);
         MaximumSurfaceFollowSpeed = Mathf.Max(0.1f, MaximumSurfaceFollowSpeed);
         SurfaceSampleHoldTime = Mathf.Max(MaximumSurfaceSampleAge, SurfaceSampleHoldTime);
@@ -532,13 +558,42 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
         // suspended above a falling wave.
         float waveResponse = Mathf.Lerp(1f, DrowningWaveResponse, drowningAmount);
         float freshWaveVelocity = GetCurrentSurfaceVerticalVelocity();
-        float targetWaveVelocity = freshWaveVelocity * WaveVelocityFollow
-                                   * WaveLiftMultiplier * waveResponse;
-        float dampingAcceleration = (targetWaveVelocity - verticalVelocity) * VerticalDamping;
         float swimAcceleration = verticalInput * VerticalSwimAcceleration;
         float buoyancyControlAcceleration = buoyancyInput >= 0f
             ? buoyancyInput * ExtraBuoyancyAcceleration
             : buoyancyInput * DrowningPullAcceleration;
+
+        if (RideWaveSurface)
+        {
+            // Work in the water's moving frame. relativeVelocity is the swimmer's
+            // vertical speed minus the surface's vertical speed, so a wave that
+            // rises or falls at several m/s carries the swimmer with it and the
+            // speed / acceleration limits only constrain motion relative to the water
+            // (swim up/down, drowning pull, settling to the floating height).
+            float surfaceVelocity = freshWaveVelocity * RideVelocityFollow * waveResponse;
+            float relativeVelocity = verticalVelocity - surfaceVelocity;
+            // Only player/ability input is acceleration-limited; the tracking spring
+            // must be free to follow wave accelerations.
+            float inputAcceleration = Mathf.Clamp(
+                swimAcceleration + buoyancyControlAcceleration,
+                -MaximumDownwardAcceleration, MaximumUpwardAcceleration);
+            float rideAcceleration = heightError * RideStiffness * springRetention
+                                     - relativeVelocity * RideDamping
+                                     + inputAcceleration;
+            // Catching up with the water (it dropped away or rose under the swimmer) is
+            // allowed to be faster than deliberate swimming, otherwise the body hovers
+            // over a falling surface at the 1 m/s relative cap.
+            relativeVelocity = Mathf.Clamp(
+                relativeVelocity + rideAcceleration * dt,
+                -Mathf.Max(MaximumDownwardSpeed * 3f, 3f),
+                Mathf.Max(MaximumUpwardSpeed * 2f, 2f));
+            verticalVelocity = relativeVelocity + surfaceVelocity;
+        }
+        else
+        {
+        float targetWaveVelocity = freshWaveVelocity * WaveVelocityFollow
+                                   * WaveLiftMultiplier * waveResponse;
+        float dampingAcceleration = (targetWaveVelocity - verticalVelocity) * VerticalDamping;
 
         float verticalAcceleration = springAcceleration + dampingAcceleration
                                      + swimAcceleration + buoyancyControlAcceleration;
@@ -548,6 +603,7 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
             verticalVelocity + verticalAcceleration * dt,
             -MaximumDownwardSpeed,
             MaximumUpwardSpeed);
+        }
         }
 
         UpdateContactFoam(dt, actor, surfaceHeight);
@@ -843,10 +899,155 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
                Time.realtimeSinceStartup - sampledSurfaceTime <= MaximumSurfaceSampleAge;
     }
 
+    /// <summary>
+    /// Folds a freshly accepted async sample into the surface tracker. The sample is
+    /// time-stamped with the simulation time of the FFT maps it was read from, so it
+    /// is first moved to the swimmer's current XZ (tangent plane, clamped) and then
+    /// extrapolated by its age using the tracked vertical velocity. Between samples
+    /// the tracker dead-reckons every physics step, so the swimmer sees a continuous
+    /// water height instead of a stair-stepped, delayed one.
+    /// </summary>
+    private void IngestSurfaceMeasurement(
+        SpectralOceanFFT.SurfaceSample sample, Vector3 currentQueryPosition, float sampleAge)
+    {
+        float now = Time.realtimeSinceStartup;
+
+        // Height at the swimmer's current XZ (the sample is exact only where it was queried).
+        float heightAtCurrent = sample.Height;
+        if (WaterSurfaceSampleUtility.TryGetHeightAtWorldPosition(
+                sample, currentQueryPosition, SurfaceTrackSlopeLimit,
+                SurfaceTrackCorrectionLimit, out float corrected))
+            heightAtCurrent = corrected;
+
+        // Vertical speed: compare the previous sample, moved to THIS sample's exact
+        // XZ, with this sample. Removing the horizontal-travel term stops swimming
+        // across a slope from being mistaken for a rising or falling wave.
+        bool gotVelocity = false;
+        float measuredVelocity = 0f;
+        float sampleInterval = 0f;
+        if (hasPrevMeasurement)
+        {
+            sampleInterval = sample.SampleTime - prevMeasurement.SampleTime;
+            if (sampleInterval > 0.015f && sampleInterval < 0.6f &&
+                WaterSurfaceSampleUtility.TryGetHeightAtWorldPosition(
+                    prevMeasurement, sample.Position, SurfaceTrackSlopeLimit,
+                    SurfaceTrackCorrectionLimit, out float previousAtThis))
+            {
+                measuredVelocity = Mathf.Clamp(
+                    (sample.Height - previousAtThis) / sampleInterval,
+                    -MaximumTrackedSurfaceSpeed, MaximumTrackedSurfaceSpeed);
+                gotVelocity = true;
+            }
+        }
+        if (sampleInterval > 0.015f || !hasPrevMeasurement)
+        {
+            prevMeasurement = sample;
+            hasPrevMeasurement = true;
+        }
+
+        bool stale = now - lastIngestRealtime > 1.0f;
+        if (!hasTracker || stale)
+        {
+            trackedHeight = heightAtCurrent;
+            trackedVelocity = gotVelocity ? measuredVelocity : 0f;
+            hasTracker = true;
+        }
+        else
+        {
+            if (gotVelocity)
+            {
+                float blend = 1f - Mathf.Exp(-sampleInterval / Mathf.Max(0.02f, SurfaceVelocitySmoothTime));
+                trackedVelocity = Mathf.Lerp(trackedVelocity, measuredVelocity, blend);
+            }
+
+            float latencyCompensated = heightAtCurrent + trackedVelocity * Mathf.Clamp(sampleAge, 0f, 0.6f);
+            float error = latencyCompensated - trackedHeight;
+            if (Mathf.Abs(error) > SurfaceTrackerSnapDistance)
+                trackedHeight = latencyCompensated;
+            else
+                trackedHeight += error * SurfaceTrackerCorrection;
+        }
+
+        // Remember the local wave slope so the tracker can follow the surface while the
+        // swimmer travels across it (e.g. sliding off the side of a wave) between samples.
+        Vector3 n = sample.Normal.sqrMagnitude > 0.001f ? sample.Normal.normalized : Vector3.up;
+        float ny = Mathf.Max(n.y, 0.12f);
+        trackedSlope = Vector2.ClampMagnitude(
+            new Vector2(-n.x / ny, -n.z / ny), SurfaceTrackSlopeLimit);
+        lastTrackXZ = new Vector2(currentQueryPosition.x, currentQueryPosition.z);
+        hasTrackXZ = true;
+
+        lastIngestRealtime = now;
+        smoothedSurfaceHeight = trackedHeight;
+        hasSmoothedSurfaceHeight = true;
+    }
+
+    private void UpdateRideSurfaceTarget(float dt)
+    {
+        if (!hasTracker)
+        {
+            // No sample yet: sit at mean sea level until the first readback arrives.
+            trackedHeight = hasSurfaceSample ? sampledSurfaceHeight : Ocean.WaterLevelY;
+            trackedVelocity = 0f;
+            smoothedSurfaceHeight = trackedHeight;
+            hasSmoothedSurfaceHeight = true;
+            return;
+        }
+
+        float age = hasSurfaceSample
+            ? Time.realtimeSinceStartup - sampledSurfaceTime
+            : float.PositiveInfinity;
+        float overdue = age - MaximumSurfaceSampleAge;   // > 0 once samples are no longer fresh
+
+        if (overdue > 0f)
+        {
+            // Samples are late (slow readback, rejected queries). Keep riding on the
+            // last measured motion but fade it out so the swimmer cannot run away.
+            trackedVelocity *= Mathf.Exp(-dt / 0.6f);
+        }
+
+        trackedHeight += trackedVelocity * dt;
+
+        // Spatial term: the surface height under the swimmer also changes because the
+        // swimmer moves across the wave slope. Without it the target stays "stuck" at
+        // the old crest height until the next sample and the body hovers above the water.
+        Transform trackActor = ActorTransform;
+        if (trackActor != null && hasTrackXZ)
+        {
+            Vector3 q = GetSurfaceQueryWorldPosition(trackActor);
+            Vector2 xz = new Vector2(q.x, q.z);
+            Vector2 moved = xz - lastTrackXZ;
+            lastTrackXZ = xz;
+            if (moved.sqrMagnitude < 4f)   // ignore teleports
+            {
+                float spatial = Vector2.Dot(trackedSlope, moved);
+                trackedHeight += Mathf.Clamp(spatial, -SurfaceTrackCorrectionLimit, SurfaceTrackCorrectionLimit);
+            }
+        }
+
+        if (overdue > SurfaceSampleHoldTime)
+        {
+            // Sampling has genuinely stopped: only now ease toward mean sea level,
+            // slowly, instead of snapping the swimmer to a flat ocean.
+            float k = 1f - Mathf.Exp(-dt / Mathf.Max(0.5f, SurfaceLostReturnTime) * 3f);
+            trackedHeight = Mathf.Lerp(trackedHeight, Ocean.WaterLevelY, k);
+        }
+
+        smoothedSurfaceHeight = trackedHeight;
+        filteredSurfaceVerticalVelocity = trackedVelocity;
+        hasSmoothedSurfaceHeight = true;
+    }
+
     private void UpdateFilteredSurfaceTarget(float dt)
     {
         if (Ocean == null)
             return;
+
+        if (RideWaveSurface)
+        {
+            UpdateRideSurfaceTarget(dt);
+            return;
+        }
 
         if (!hasSmoothedSurfaceHeight)
         {
@@ -888,6 +1089,9 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
 
     private float GetCurrentSurfaceVerticalVelocity()
     {
+        if (RideWaveSurface)
+            return hasTracker ? trackedVelocity : 0f;
+
         if (!hasSmoothedSurfaceHeight ||
             (!HasFreshSurfaceSample() && (!hasSurfaceSample ||
              Time.realtimeSinceStartup - sampledSurfaceTime > SurfaceSampleHoldTime)))
@@ -944,7 +1148,6 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
             return;
 
         Vector3 requestPosition = GetSurfaceQueryWorldPosition(actor);
-        lastSurfaceRequestPosition = requestPosition;
         nextSampleRequestTime = Time.time + SurfaceSampleInterval;
         sampleRequestPending = true;
         int generation = sampleGeneration;
@@ -955,10 +1158,19 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
                 return;
 
             sampleRequestPending = false;
-            if (!isActiveAndEnabled || !sample.IsValid ||
-                float.IsNaN(sample.Height) || float.IsInfinity(sample.Height) ||
-                sample.HorizontalQueryErrorMeters > MaximumSurfaceQueryError)
+            if (!isActiveAndEnabled)
                 return;
+            if (!sample.IsValid ||
+                float.IsNaN(sample.Height) || float.IsInfinity(sample.Height))
+            {
+                rejectedInvalidCount++;
+                return;
+            }
+            if (sample.HorizontalQueryErrorMeters > MaximumSurfaceQueryError)
+            {
+                rejectedErrorCount++;
+                return;
+            }
 
             Transform currentActor = ActorTransform;
             Vector3 currentQueryPosition = GetSurfaceQueryWorldPosition(currentActor);
@@ -966,35 +1178,35 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
                 currentQueryPosition.x - requestPosition.x,
                 currentQueryPosition.z - requestPosition.z);
 
-            // Async GPU readback returns the location requested a frame or two ago.
-            // Ignore results that no longer describe the water beneath the moving
-            // swimmer; for small drift, use the sampled tangent plane to move the
-            // height to the current body-centre XZ.
+            // SpectralOceanFFT returns the height at the exact world XZ that was
+            // queried (sample.Position.xz == requestPosition.xz). The returned
+            // normal is useful for orientation, but extrapolating the height along
+            // its tangent plane is unsafe for a fast-moving CharacterController:
+            // at higher wind, steep normals turn even a small async readback drift
+            // into a large artificial vertical correction. Accept only nearby
+            // samples and use their exact queried height without extrapolation.
             if (spatialDelta.sqrMagnitude > MaximumSurfaceQueryDrift * MaximumSurfaceQueryDrift)
+            {
+                rejectedDriftCount++;
                 return;
-
-            // Use the exact same tangent-plane reconstruction as OceanBuoyancy.
-            // Wind direction is already represented by the FFT displacement maps;
-            // the sampled normal supplies the local directional slope. Steep but
-            // valid faces are clamped, not rejected, and the correction is not
-            // artificially limited to 0.35 m.
-            if (!WaterSurfaceSampleUtility.TryGetHeightAtWorldPosition(
-                    sample, currentQueryPosition, MaximumSurfaceSampleSlope,
-                    MaximumSurfaceHeightCorrection, out float correctedSurfaceHeight))
-                return;
+            }
 
             float currentSampleAge = Time.realtimeSinceStartup - sample.SampleTime;
             if (currentSampleAge < -0.05f || currentSampleAge > MaximumSurfaceSampleAge)
+            {
+                rejectedAgeCount++;
                 return;
+            }
 
-            sampledSurfaceHeight = correctedSurfaceHeight;
-            lastRawSurfaceHeight = sample.Height;
-            lastSurfaceHeightCorrection = correctedSurfaceHeight - sample.Height;
-            lastSurfaceSampleNormal = sample.Normal;
+            acceptedSampleCount++;
+            sampledSurfaceHeight = sample.Height;
             sampledLattice = sample.LatticeDisplacementXZ;
-            sampledSurfaceQueryPosition = currentQueryPosition;
+            sampledSurfaceQueryPosition = requestPosition;
             sampledSurfaceQueryError = sample.HorizontalQueryErrorMeters;
             sampledSurfaceTime = sample.SampleTime;
+
+            if (RideWaveSurface)
+                IngestSurfaceMeasurement(sample, currentQueryPosition, currentSampleAge);
 
             if (!hasSmoothedSurfaceHeight)
             {
@@ -1008,6 +1220,26 @@ public sealed class SwimmingMovement : MonoBehaviour, IMovement, IPlanarVelocity
 
         if (!queued)
             sampleRequestPending = false;
+    }
+
+    private void OnGUI()
+    {
+        if (!ShowSurfaceDebug || !isActiveAndEnabled)
+            return;
+
+        float centreY = ActorTransform != null ? GetBodyCenterY(ActorTransform) : 0f;
+        GUI.Label(new Rect(10f, 10f, 640f, 110f),
+            "Swim surface | accepted " + acceptedSampleCount +
+            "  rejected: invalid " + rejectedInvalidCount +
+            ", error " + rejectedErrorCount +
+            ", drift " + rejectedDriftCount +
+            ", age " + rejectedAgeCount +
+            "\nsample age " + SurfaceSampleAge.ToString("F2") + " s" +
+            "   tracked height " + trackedHeight.ToString("F2") +
+            "   surface vel " + trackedVelocity.ToString("F2") + " m/s" +
+            "\nbody centre Y " + centreY.ToString("F2") +
+            "   body-surface " + (centreY - trackedHeight).ToString("F2") +
+            "   waveAirborne " + waveAirborne);
     }
 
     private void ResolveReferences()
