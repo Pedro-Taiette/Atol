@@ -461,6 +461,20 @@ public sealed class PlayerController : MonoBehaviour
     /// Leaves the boat with a hop from the current seat position (no exit anchor).
     /// The player ignores the boat's colliders for BoatExitIgnoreCollisionTime.
     /// </summary>
+    public void KnockOffBoat(Vector3 direction, float speed)
+    {
+        if (!isAboardBoat || currentBoat == null)
+            return;
+
+        direction = Vector3.ProjectOnPlane(direction, Vector3.up).normalized;
+
+        LeaveBoatAtSafePose(
+            transform.position + Vector3.up * 0.1f,
+            Quaternion.Euler(0f, transform.eulerAngles.y, 0f),
+            true,
+            direction * speed);
+    }
+
     public void LeaveBoatWithJump()
     {
         if (!isAboardBoat || currentBoat == null)
