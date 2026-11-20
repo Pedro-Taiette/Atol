@@ -22,11 +22,10 @@ public sealed class PlayerController : MonoBehaviour
     public InputActionReference JumpAction;
     [Tooltip("Optional: hold to swim downward. While swimming, JumpAction performs a stamina-costing hop out of the water (SwimmingMovement.EnableJumpHop).")]
     public InputActionReference DiveAction;
-    [Tooltip("Optional Input System action for the grounded dash. If unassigned, Left Alt is used.")]
+    [Tooltip("Optional. If unassigned, Left Alt is used.")]
     public InputActionReference DashAction;
 
     [Header("HUD")]
-    [Tooltip("Optional. Created automatically (bottom-right of the screen) when empty.")]
     public StatusBarUI StaminaBar;
 
     [Header("Boat Boarding")]
@@ -966,7 +965,6 @@ public sealed class PlayerController : MonoBehaviour
             TryDash();
     }
 
-    /// <summary>Dashing is a grounded-only dodge; it is ignored while swimming or aboard a boat.</summary>
     private void TryDash()
     {
         if (GroundedMovement != null && !isAboardBoat && IsSameMovement(activeMovement, GroundedMovement))

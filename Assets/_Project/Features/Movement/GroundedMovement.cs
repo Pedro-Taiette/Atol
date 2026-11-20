@@ -19,7 +19,6 @@ public class GroundedMovement : MonoBehaviour, IMovement, IPlanarVelocityMovemen
     [Min(0f)] public float CoyoteTime = 0.2f;
 
     [Header("Stamina")]
-    [Tooltip("Optional pool spent by jumps and dashes. Assigned by PlayerController when empty.")]
     public StaminaComponent Stamina;
     [Min(0f)] public float JumpStaminaCost = 10f;
 
@@ -53,7 +52,6 @@ public class GroundedMovement : MonoBehaviour, IMovement, IPlanarVelocityMovemen
 
     /// <summary>Raised only after a normal or coyote-time jump has actually been accepted.</summary>
     public event System.Action JumpStarted;
-    /// <summary>Raised when a dash has been accepted and its stamina spent.</summary>
     public event System.Action DashStarted;
 
     private void OnEnable()
@@ -135,10 +133,6 @@ public class GroundedMovement : MonoBehaviour, IMovement, IPlanarVelocityMovemen
         JumpStarted?.Invoke();
     }
 
-    /// <summary>
-    /// Short dodge burst along the held input direction, or facing direction when idle.
-    /// Only accepted on the ground (or inside the coyote window) and when stamina allows.
-    /// </summary>
     public bool Dash()
     {
         if (Controller == null || !Controller.enabled || _isDashing || Time.time < _nextDashTime)
