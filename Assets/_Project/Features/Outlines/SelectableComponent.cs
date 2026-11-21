@@ -42,6 +42,18 @@ public class SelectableComponent : MonoBehaviour
         SetShaderProperty(0f);
     }
 
+    private void OnEnable()
+    {
+        if (_outline)
+            _outline.enabled = true;
+    }
+
+    private void OnDisable()
+    {
+        if (_outline)
+            _outline.enabled = false;
+    }
+
     private void Start()
     {
         if (ObjectSelector.Instance == null)
