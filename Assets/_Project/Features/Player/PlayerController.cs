@@ -187,7 +187,7 @@ public sealed class PlayerController : MonoBehaviour
             return;
 
         // Only use direct keyboard interaction when no Input System action is assigned.
-        if (InteractAction == null)
+        if (InteractAction == null && !CutsceneComponent.AnyPlaying)
             UpdateKeyboardFallbackInteraction();
         if (DashAction == null && Keyboard.current != null && Keyboard.current.leftAltKey.wasPressedThisFrame)
             TryDash();
@@ -203,7 +203,8 @@ public sealed class PlayerController : MonoBehaviour
         if (activeMovement == null)
             return;
 
-        activeMovement.Move(latestDirection);
+        // The player only takes control once the cutscene is over.
+        activeMovement.Move(CutsceneComponent.AnyPlaying ? Vector2.zero : latestDirection);
         activeMovement.ApplyMovement();
     }
 
@@ -674,6 +675,9 @@ public sealed class PlayerController : MonoBehaviour
 
     private void OnInteract(InputAction.CallbackContext context)
     {
+        if (CutsceneComponent.AnyPlaying)
+            return;
+
         if (context.performed)
         {
             if (isAboardBoat)
@@ -952,6 +956,9 @@ public sealed class PlayerController : MonoBehaviour
 
     private void OnJumped(InputAction.CallbackContext context)
     {
+        if (CutsceneComponent.AnyPlaying)
+            return;
+
         if (isAboardBoat)
         {
             if (context.performed)
@@ -1004,7 +1011,7 @@ public sealed class PlayerController : MonoBehaviour
 
     private void TryDash()
     {
-        if (GroundedMovement != null && !isAboardBoat && IsSameMovement(activeMovement, GroundedMovement))
+        if (!CutsceneComponent.AnyPlaying && GroundedMovement != null && !isAboardBoat && IsSameMovement(activeMovement, GroundedMovement))
             GroundedMovement.Dash();
     }
 

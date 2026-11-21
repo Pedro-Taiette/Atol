@@ -841,7 +841,7 @@ namespace Assets._Project.Features.Shark
 
         private bool CanSeeTarget(float radius)
         {
-            if (Target == null || Target.IsAboardBoat)
+            if (Target == null || Target.IsAboardBoat || CutsceneComponent.AnyPlaying)
                 return false;
 
             if (Target.Health && Target.Health.IsDead)
@@ -855,7 +855,7 @@ namespace Assets._Project.Features.Shark
 
         private bool CanSeeBoat(float radius)
         {
-            if (Target == null || !Target.IsAboardBoat || Target.CurrentBoat == null)
+            if (Target == null || !Target.IsAboardBoat || Target.CurrentBoat == null || CutsceneComponent.AnyPlaying)
                 return false;
 
             if (Target.Health && Target.Health.IsDead)
