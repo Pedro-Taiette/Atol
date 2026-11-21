@@ -84,6 +84,12 @@ namespace Assets._Project.Features.Shark
         [Tooltip("Limite de subida/descida pra ele não ser catapultado por uma leitura ruim da onda.")]
         public float MaxVerticalSpeed = 4f;
 
+        [Header("Aggression")]
+        [Tooltip("Multiplicadores com o Decay do mundo no máximo. Com Decay 0 vale o valor normal.")]
+        public float MaxDecayDetection = 1.5f;
+        public float MaxDecaySpeed = 1.4f;
+        public float MaxDecayCooldown = 0.5f;
+
         [Header("Stuck")]
         [Tooltip("Parado por esse tempo tentando nadar, ele desiste e procura outro ponto.")]
         public float StuckTime = 2f;
@@ -333,7 +339,7 @@ namespace Assets._Project.Features.Shark
             if (Time.time - _stateStartTime < BiteDuration)
                 return;
 
-            _nextBiteTime = Time.time + BiteCooldown;
+            _nextBiteTime = Time.time + BiteCooldown * Aggression(MaxDecayCooldown);
             SetState(State.Chase);
         }
 
@@ -354,7 +360,7 @@ namespace Assets._Project.Features.Shark
 
             bool closeEnough = FlatDistance(transform.position, boatPosition) < CircleRadius * 1.5f;
 
-            _swimming.Speed = closeEnough ? CircleSpeed : BoatChaseSpeed;
+            _swimming.Speed = closeEnough ? CircleSpeed : BoatChaseSpeed * Aggression(MaxDecaySpeed);
             SwimTowards(closeEnough ? circlePoint : boatPosition);
 
             if (closeEnough && Time.time - _stateStartTime > _circleDuration && Time.time >= _nextLeapTime)
@@ -527,7 +533,7 @@ namespace Assets._Project.Features.Shark
                 _swimming.enabled = true;
             }
 
-            _nextLeapTime = Time.time + LeapCooldown;
+            _nextLeapTime = Time.time + LeapCooldown * Aggression(MaxDecayCooldown);
             SetState(State.Patrol);
         }
 
@@ -570,7 +576,7 @@ namespace Assets._Project.Features.Shark
                     PickPatrolPoint();
                     break;
                 case State.Chase:
-                    _swimming.Speed = ChaseSpeed;
+                    _swimming.Speed = ChaseSpeed * Aggression(MaxDecaySpeed);
                     break;
                 case State.Bite:
                     _swimming.Speed = BiteLungeSpeed;
@@ -578,7 +584,7 @@ namespace Assets._Project.Features.Shark
                     break;
                 case State.Circle:
                     _swimming.Speed = CircleSpeed;
-                    _circleDuration = Random.Range(CircleTime.x, CircleTime.y);
+                    _circleDuration = Random.Range(CircleTime.x, CircleTime.y) * Aggression(MaxDecayCooldown);
                     break;
                 case State.Leap:
                     _leapBoat = Target.CurrentBoat;
@@ -605,7 +611,7 @@ namespace Assets._Project.Features.Shark
             if (Target.ActiveMovement is not SwimmingMovement)
                 return false;
 
-            return FlatDistance(transform.position, Target.transform.position) < radius;
+            return FlatDistance(transform.position, Target.transform.position) < radius * Aggression(MaxDecayDetection);
         }
 
         private bool CanSeeBoat(float radius)
@@ -616,7 +622,18 @@ namespace Assets._Project.Features.Shark
             if (Target.Health && Target.Health.IsDead)
                 return false;
 
-            return FlatDistance(transform.position, Target.CurrentBoat.transform.position) < radius;
+            return FlatDistance(transform.position, Target.CurrentBoat.transform.position) < radius * Aggression(MaxDecayDetection);
+        }
+
+        // Quanto mais o mundo decai, mais longe ele enxerga, mais rápido persegue e menos espera entre ataques.
+        private float Aggression(float maxDecayMultiplier)
+        {
+            WorldStateController world = WorldStateController.Instance;
+
+            if (world == null)
+                return 1f;
+
+            return Mathf.Lerp(1f, maxDecayMultiplier, world.Decay / (float)WorldStateController.DecayMaximum);
         }
 
         private void PickPatrolPoint()
