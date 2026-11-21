@@ -12,6 +12,8 @@ namespace Assets._Project.Features.StatusViewModels
         [Tooltip("Estrela ao lado das barras. Dá um tranco ao levar dano e pulsa com pouca vida.")]
         public RectTransform Emblem;
         public float DamagePunch = 0.35f;
+        [Tooltip("Tela preta usada na morte. Ignora o Group pra não sumir junto com o HUD.")]
+        public CanvasGroup Fade;
 
         private HealthComponent _health;
         private StaminaComponent _stamina;

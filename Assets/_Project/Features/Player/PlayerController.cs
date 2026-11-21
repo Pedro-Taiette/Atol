@@ -88,6 +88,9 @@ public sealed class PlayerController : MonoBehaviour
     public HealthComponent Health { get; private set; }
 
     public IMovement ActiveMovement => activeMovement;
+    /// <summary>Set while the player must not act (e.g. the death and respawn sequence).</summary>
+    public bool InputLocked { get; set; }
+    private bool InputBlocked => InputLocked || CutsceneComponent.AnyPlaying;
     public bool IsAboardBoat => isAboardBoat;
     public BoatController CurrentBoat => currentBoat;
 
@@ -109,8 +112,15 @@ public sealed class PlayerController : MonoBehaviour
         if (Health == null)
             Health = gameObject.AddComponent<HealthComponent>();
 
-        if (HudPrefab != null)
-            Instantiate(HudPrefab).Bind(Health, Stamina);
+        PlayerHud hud = HudPrefab != null ? Instantiate(HudPrefab) : null;
+        if (hud != null)
+            hud.Bind(Health, Stamina);
+
+        PlayerRespawn respawn = GetComponent<PlayerRespawn>();
+        if (respawn == null)
+            respawn = gameObject.AddComponent<PlayerRespawn>();
+        if (respawn.Fade == null && hud != null)
+            respawn.Fade = hud.Fade;
 
         boatControlHint = GetComponent<BoatControlHintUI>();
         if (boatControlHint == null)
@@ -187,7 +197,7 @@ public sealed class PlayerController : MonoBehaviour
             return;
 
         // Only use direct keyboard interaction when no Input System action is assigned.
-        if (InteractAction == null && !CutsceneComponent.AnyPlaying)
+        if (InteractAction == null && !InputBlocked)
             UpdateKeyboardFallbackInteraction();
         if (DashAction == null && Keyboard.current != null && Keyboard.current.leftAltKey.wasPressedThisFrame)
             TryDash();
@@ -204,7 +214,7 @@ public sealed class PlayerController : MonoBehaviour
             return;
 
         // The player only takes control once the cutscene is over.
-        activeMovement.Move(CutsceneComponent.AnyPlaying ? Vector2.zero : latestDirection);
+        activeMovement.Move(InputBlocked ? Vector2.zero : latestDirection);
         activeMovement.ApplyMovement();
     }
 
@@ -675,7 +685,7 @@ public sealed class PlayerController : MonoBehaviour
 
     private void OnInteract(InputAction.CallbackContext context)
     {
-        if (CutsceneComponent.AnyPlaying)
+        if (InputBlocked)
             return;
 
         if (context.performed)
@@ -956,7 +966,7 @@ public sealed class PlayerController : MonoBehaviour
 
     private void OnJumped(InputAction.CallbackContext context)
     {
-        if (CutsceneComponent.AnyPlaying)
+        if (InputBlocked)
             return;
 
         if (isAboardBoat)
@@ -1011,7 +1021,7 @@ public sealed class PlayerController : MonoBehaviour
 
     private void TryDash()
     {
-        if (!CutsceneComponent.AnyPlaying && GroundedMovement != null && !isAboardBoat && IsSameMovement(activeMovement, GroundedMovement))
+        if (!InputBlocked && GroundedMovement != null && !isAboardBoat && IsSameMovement(activeMovement, GroundedMovement))
             GroundedMovement.Dash();
     }
 
