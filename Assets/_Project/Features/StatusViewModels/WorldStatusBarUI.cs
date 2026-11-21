@@ -30,22 +30,36 @@ namespace Assets._Project.Features.StatusViewModels
             if (Source == null)
                 Source = GetComponent<HealthComponent>();
 
-            _pool = Source as IStatusPool;
+            if (Source is IStatusPool pool)
+                Bind(pool);
+        }
 
+        private void Start()
+        {
             if (_pool == null)
             {
                 _log.Error("No IStatusPool source found, add a HealthComponent");
                 enabled = false;
-                return;
             }
+        }
 
-            CreateCanvas();
+        // Pra quando a barra é criada por código (ex: água no barco).
+        public void Bind(IStatusPool pool)
+        {
+            _pool = pool;
 
+            if (_canvas == null)
+                CreateCanvas();
+
+            _canvas.gameObject.SetActive(enabled);
             _displayed = _pool.Normalized;
         }
 
         private void LateUpdate()
         {
+            if (_pool == null)
+                return;
+
             _displayed = Mathf.Lerp(_displayed, _pool.Normalized, Smoothing * Time.deltaTime);
             _fill.anchorMax = new Vector2(Mathf.Clamp01(_displayed), 1f);
 
