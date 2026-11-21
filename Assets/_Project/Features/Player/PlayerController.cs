@@ -1,5 +1,6 @@
 using Assets._Project.Features.Boat;
 using Assets._Project.Features.Movement;
+using Assets._Project.Features.Pause;
 using Assets._Project.Features.StatusViewModels;
 using Assets._Project.Features.WaterEffects;
 using UnityEngine;
@@ -130,6 +131,9 @@ public sealed class PlayerController : MonoBehaviour
             windIndicator = gameObject.AddComponent<WindIndicatorUI>();
         windIndicator.Ocean = Ocean;
 
+        if (GetComponent<PauseMenu>() == null)
+            gameObject.AddComponent<PauseMenu>();
+
         if (GroundedMovement != null && GroundedMovement.Controller == null)
             GroundedMovement.Controller = CharacterController;
         // Waterline contact foam must not depend on switching the movement motor to
@@ -188,6 +192,9 @@ public sealed class PlayerController : MonoBehaviour
 
     private void Update()
     {
+        if (PauseMenu.IsPaused)
+            return;
+
         // Only use direct keyboard interaction when no Input System action is assigned.
         if (InteractAction == null)
             UpdateKeyboardFallbackInteraction();
