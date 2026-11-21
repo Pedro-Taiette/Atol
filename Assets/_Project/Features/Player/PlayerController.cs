@@ -27,8 +27,7 @@ public sealed class PlayerController : MonoBehaviour
     public InputActionReference DashAction;
 
     [Header("HUD")]
-    public StatusBarUI StaminaBar;
-    public StatusBarUI HealthBar;
+    public PlayerHud HudPrefab;
     public PauseMenu PauseMenuPrefab;
 
     [Header("Boat Boarding")]
@@ -106,21 +105,12 @@ public sealed class PlayerController : MonoBehaviour
         if (GroundedMovement != null && GroundedMovement.Stamina == null)
             GroundedMovement.Stamina = Stamina;
 
-        if (StaminaBar == null)
-            StaminaBar = gameObject.AddComponent<StatusBarUI>();
-        StaminaBar.Bind(Stamina, "Stamina");
-
         Health = GetComponent<HealthComponent>();
         if (Health == null)
             Health = gameObject.AddComponent<HealthComponent>();
 
-        if (HealthBar == null)
-        {
-            HealthBar = gameObject.AddComponent<StatusBarUI>();
-            HealthBar.FillColor = new Color(0.85f, 0.2f, 0.2f, 1f);
-            HealthBar.Offset = new Vector2(28f, 52f);
-        }
-        HealthBar.Bind(Health, "Health");
+        if (HudPrefab != null)
+            Instantiate(HudPrefab).Bind(Health, Stamina);
 
         boatControlHint = GetComponent<BoatControlHintUI>();
         if (boatControlHint == null)

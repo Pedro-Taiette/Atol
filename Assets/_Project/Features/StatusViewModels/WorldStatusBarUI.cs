@@ -1,5 +1,6 @@
 using Assets._Project.Framework.Logging;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace Assets._Project.Features.StatusViewModels
 {
@@ -100,7 +101,26 @@ namespace Assets._Project.Features.StatusViewModels
             _canvas.localScale = Vector3.one / PixelsPerUnit;
             _canvas.position = transform.position + Offset;
 
-            StatusBarUI.BuildBar(_canvas, pixelSize, BackgroundColor, FillColor, out _fill);
+            GameObject barObject = new GameObject("Bar", typeof(RectTransform), typeof(Image));
+            barObject.transform.SetParent(_canvas, false);
+            barObject.GetComponent<RectTransform>().sizeDelta = pixelSize;
+
+            Image background = barObject.GetComponent<Image>();
+            background.color = BackgroundColor;
+            background.raycastTarget = false;
+
+            GameObject fillObject = new GameObject("Fill", typeof(RectTransform), typeof(Image));
+            fillObject.transform.SetParent(barObject.transform, false);
+
+            _fill = fillObject.GetComponent<RectTransform>();
+            _fill.anchorMin = Vector2.zero;
+            _fill.anchorMax = Vector2.one;
+            _fill.offsetMin = Vector2.zero;
+            _fill.offsetMax = Vector2.zero;
+
+            Image fillImage = fillObject.GetComponent<Image>();
+            fillImage.color = FillColor;
+            fillImage.raycastTarget = false;
         }
     }
 }
