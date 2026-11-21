@@ -1,4 +1,5 @@
 using Assets._Project.Features.Boat;
+using Assets._Project.Features.Combat;
 using Assets._Project.Features.Movement;
 using Assets._Project.Features.Pause;
 using Assets._Project.Features.StatusViewModels;
@@ -28,6 +29,7 @@ public sealed class PlayerController : MonoBehaviour
 
     [Header("HUD")]
     public PlayerHud HudPrefab;
+    public WindIndicatorUI WindIndicatorPrefab;
     public PauseMenu PauseMenuPrefab;
 
     [Header("Boat Boarding")]
@@ -77,6 +79,7 @@ public sealed class PlayerController : MonoBehaviour
     private float ignoreBoatCollisionUntil;
     private bool boatCollisionIgnored;
     private bool sailInputActive;
+    private bool bailing;
     private float nextPromptPollTime;
     private const float PromptPollInterval = 0.1f;
     private int pendingSampleGeneration;
@@ -90,7 +93,9 @@ public sealed class PlayerController : MonoBehaviour
     public IMovement ActiveMovement => activeMovement;
     /// <summary>Set while the player must not act (e.g. the death and respawn sequence).</summary>
     public bool InputLocked { get; set; }
-    private bool InputBlocked => InputLocked || CutsceneComponent.AnyPlaying;
+    public bool IsBailing => bailing;
+    /// <summary>True while the player must not act: locked, in a cutscene or paused.</summary>
+    public bool InputBlocked => InputLocked || CutsceneComponent.AnyPlaying || PauseMenu.IsPaused;
     public bool IsAboardBoat => isAboardBoat;
     public BoatController CurrentBoat => currentBoat;
 
@@ -112,25 +117,30 @@ public sealed class PlayerController : MonoBehaviour
         if (Health == null)
             Health = gameObject.AddComponent<HealthComponent>();
 
+        if (GetComponent<PlayerStrike>() == null)
+            gameObject.AddComponent<PlayerStrike>();
+
         PlayerHud hud = HudPrefab != null ? Instantiate(HudPrefab) : null;
         if (hud != null)
-            hud.Bind(Health, Stamina);
+            hud.Bind(this);
 
         PlayerRespawn respawn = GetComponent<PlayerRespawn>();
         if (respawn == null)
             respawn = gameObject.AddComponent<PlayerRespawn>();
-        if (respawn.Fade == null && hud != null)
-            respawn.Fade = hud.Fade;
+        if (respawn.Hud == null)
+            respawn.Hud = hud;
 
         boatControlHint = GetComponent<BoatControlHintUI>();
         if (boatControlHint == null)
             boatControlHint = gameObject.AddComponent<BoatControlHintUI>();
         boatControlHint.SetVisible(false);
 
-        windIndicator = GetComponent<WindIndicatorUI>();
-        if (windIndicator == null)
-            windIndicator = gameObject.AddComponent<WindIndicatorUI>();
-        windIndicator.Ocean = Ocean;
+        if (WindIndicatorPrefab != null)
+        {
+            windIndicator = Instantiate(WindIndicatorPrefab);
+            windIndicator.Ocean = Ocean;
+            windIndicator.Player = this;
+        }
 
         if (PauseMenuPrefab != null && FindAnyObjectByType<PauseMenu>() == null)
             Instantiate(PauseMenuPrefab);
@@ -204,6 +214,9 @@ public sealed class PlayerController : MonoBehaviour
 
         UpdateBoatCollisionIgnore();
         UpdateSailRotationInput();
+        UpdateBailing();
+
+        CameraFeel.Speed = isAboardBoat && currentBoat != null ? currentBoat.PlanarSpeed : 0f;
         UpdateNearbyBoatPrompt();
         UpdateAutomaticSwimming();
     }
@@ -214,7 +227,7 @@ public sealed class PlayerController : MonoBehaviour
             return;
 
         // The player only takes control once the cutscene is over.
-        activeMovement.Move(InputBlocked ? Vector2.zero : latestDirection);
+        activeMovement.Move(InputBlocked || bailing ? Vector2.zero : latestDirection);
         activeMovement.ApplyMovement();
     }
 
@@ -641,6 +654,21 @@ public sealed class PlayerController : MonoBehaviour
 
         BoatMovement.SetSailRotationInput(Mathf.Clamp(rotationInput, -1f, 1f));
         sailInputActive = true;
+    }
+
+    // Holding F bails water out of the hull by hand. The helm is let go while doing it.
+    private void UpdateBailing()
+    {
+        bailing = false;
+
+        if (!isAboardBoat || currentBoat == null || Keyboard.current == null || !Keyboard.current.fKey.isPressed)
+            return;
+
+        if (currentBoat.TryGetComponent(out BoatFlooding flooding) && flooding.Water > 0f)
+        {
+            bailing = true;
+            flooding.Bail(Time.deltaTime);
+        }
     }
 
     private void UpdateNearbyBoatPrompt()

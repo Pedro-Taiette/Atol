@@ -1,17 +1,19 @@
 using Assets._Project.Features.Boat;
+using Assets._Project.Features.Duceree;
+using Assets._Project.Features.StatusViewModels;
 using System.Collections;
 using UnityEngine;
 
-// Morte do player: a tela escurece, ele volta pra onde nasceu, os barcos voltam pro lugar
-// e o mundo decai um nível, então cada morte deixa a próxima tentativa mais difícil.
+// Morte do player: a estrela do HUD atravessa a tela, tudo escurece, ele volta pra onde nasceu (embaixo da
+// Duceree, que ganha mais uma estrela), os barcos voltam pro lugar e o mundo decai um nível.
 [DisallowMultipleComponent]
 public sealed class PlayerRespawn : MonoBehaviour
 {
-    [Tooltip("CanvasGroup preto de tela cheia (Fade do PlayerHUD.prefab).")]
-    public CanvasGroup Fade;
-    public float DeathDelay = 1.2f;
-    public float FadeTime = 1f;
-    public float BlackTime = 0.8f;
+    [Tooltip("HUD que faz a transição da morte. Sem ele o renascimento é seco.")]
+    public PlayerHud Hud;
+    public float DeathDelay = 2.2f;
+    [Tooltip("Tempo pra ela se levantar antes de devolver o controle.")]
+    public float RiseTime = 2.4f;
 
     private PlayerController _player;
     private Vector3 _spawnPosition;
@@ -62,12 +64,19 @@ public sealed class PlayerRespawn : MonoBehaviour
             _player.SwimmingMovement.SetDrowning(true);
 
         yield return new WaitForSeconds(DeathDelay);
-        yield return FadeTo(1f);
+
+        if (Hud)
+            yield return Hud.PlayDeath();
 
         ResetWorld();
 
-        yield return new WaitForSeconds(BlackTime);
-        yield return FadeTo(0f);
+        if (DucereeTree.Instance)
+            DucereeTree.Instance.LightStar();
+
+        if (Hud)
+            yield return Hud.PlayRebirth();
+
+        yield return new WaitForSeconds(RiseTime);
 
         _player.InputLocked = false;
         _respawning = false;
@@ -113,17 +122,5 @@ public sealed class PlayerRespawn : MonoBehaviour
 
         _player.Health.Fill();
         _player.Stamina.Fill();
-    }
-
-    private IEnumerator FadeTo(float alpha)
-    {
-        if (Fade == null)
-            yield break;
-
-        while (!Mathf.Approximately(Fade.alpha, alpha))
-        {
-            Fade.alpha = Mathf.MoveTowards(Fade.alpha, alpha, Time.deltaTime / Mathf.Max(FadeTime, 0.01f));
-            yield return null;
-        }
     }
 }

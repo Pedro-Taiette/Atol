@@ -8,7 +8,7 @@ namespace Assets._Project.Features.StatusViewModels
         float Normalized { get; }
     }
 
-    // Barra do HUD. O visual fica no PlayerHUD.prefab, aqui só o preenchimento e os efeitos.
+    // Barra de status. O visual fica no prefab, aqui só o preenchimento e os efeitos.
     public sealed class StatusBarUI : MonoBehaviour
     {
         public RectTransform Fill;
@@ -26,9 +26,11 @@ namespace Assets._Project.Features.StatusViewModels
         [Range(0f, 1f)] public float LowThreshold = 0.25f;
         public Color LowColor = new Color(0.9f, 0.25f, 0.2f, 1f);
 
-        [Header("Hide When Full")]
-        [Tooltip("Opcional. Com um CanvasGroup a barra some depois de um tempo cheia.")]
+        [Header("Auto Hide")]
+        [Tooltip("Opcional. Com um CanvasGroup a barra some depois de um tempo cheia (ou vazia).")]
         public CanvasGroup Group;
+        [Tooltip("Some quando vazia em vez de cheia, ex: água no barco.")]
+        public bool HideWhenEmpty;
         public float HideDelay = 2f;
 
         private IStatusPool _pool;
@@ -37,19 +39,22 @@ namespace Assets._Project.Features.StatusViewModels
         private float _ghost;
         private float _lastValue;
         private float _ghostHoldUntil;
-        private float _lastNotFullTime;
+        private float _lastShownTime;
         private float _flashUntil;
 
         private void Awake()
         {
             if (FillGraphic)
                 _fillColor = FillGraphic.color;
+
+            if (Group)
+                Group.alpha = 0f;
         }
 
         public void Bind(IStatusPool pool)
         {
             _pool = pool;
-            _displayed = _ghost = _lastValue = _pool != null ? _pool.Normalized : 0f;
+            _displayed = _ghost = _lastValue = Value;
 
             Apply();
         }
@@ -58,15 +63,14 @@ namespace Assets._Project.Features.StatusViewModels
         public void Flash()
         {
             _flashUntil = Time.unscaledTime + 0.35f;
-            _lastNotFullTime = Time.time;
+            _lastShownTime = Time.time;
         }
+
+        private float Value => _pool as Object ? _pool.Normalized : 0f;
 
         private void Update()
         {
-            if (_pool == null || Fill == null)
-                return;
-
-            float value = _pool.Normalized;
+            float value = Value;
 
             if (value < _lastValue - 0.0001f)
                 _ghostHoldUntil = Time.time + GhostDelay;
@@ -96,10 +100,12 @@ namespace Assets._Project.Features.StatusViewModels
 
             if (Group)
             {
-                if (value < 0.999f)
-                    _lastNotFullTime = Time.time;
+                bool resting = HideWhenEmpty ? value <= 0.001f : value >= 0.999f;
 
-                float alpha = Time.time - _lastNotFullTime > HideDelay ? 0f : 1f;
+                if (!resting)
+                    _lastShownTime = Time.time;
+
+                float alpha = Time.time - _lastShownTime > HideDelay ? 0f : 1f;
                 Group.alpha = Mathf.MoveTowards(Group.alpha, alpha, 3f * Time.deltaTime);
             }
         }

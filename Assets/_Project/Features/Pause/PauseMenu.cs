@@ -1,6 +1,8 @@
+using Assets._Project.Features.Audio;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
+using UnityEngine.UI;
 
 namespace Assets._Project.Features.Pause
 {
@@ -13,13 +15,19 @@ namespace Assets._Project.Features.Pause
         public GameObject Panel;
         [Tooltip("Botão que começa selecionado, pra dar pra navegar no teclado/controle.")]
         public GameObject FirstSelected;
+        public Slider VolumeSlider;
+        public AudioClip ClickSound;
 
         private bool _selectorWasPaused;
 
         private void Awake()
         {
             Panel.SetActive(false);
+            VolumeSlider.SetValueWithoutNotify(MasterVolume.Value);
         }
+
+        // Ligado no onValueChanged do slider.
+        public void SetVolume(float value) => MasterVolume.Value = value;
 
         private void Update()
         {
@@ -35,17 +43,22 @@ namespace Assets._Project.Features.Pause
             SetPaused(false);
         }
 
-        public void Resume() => SetPaused(false);
+        public void Resume()
+        {
+            SetPaused(false);
+            Click();
+        }
+
+        private void Click()
+        {
+            if (Camera.main)
+                Sound.Play(ClickSound, Camera.main.transform.position);
+        }
 
         public void Quit()
         {
             SetPaused(false);
-
-#if UNITY_EDITOR
-            UnityEditor.EditorApplication.isPlaying = false;
-#else
-            Application.Quit();
-#endif
+            MainMenu.QuitGame();
         }
 
         public void SetPaused(bool paused)

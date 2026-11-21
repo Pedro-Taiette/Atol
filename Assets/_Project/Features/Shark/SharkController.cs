@@ -1,3 +1,4 @@
+using Assets._Project.Features.Audio;
 using Assets._Project.Features.Boat;
 using Assets._Project.Features.Combat;
 using Assets._Project.Features.StatusViewModels;
@@ -92,10 +93,7 @@ namespace Assets._Project.Features.Shark
         public float LatchMaxTime = 20f;
 
         [Header("Shake Off")]
-        [Tooltip("Clicar no tubarão preso dá um golpe (usa o SelectableComponent).")]
-        public SelectableComponent Selectable;
-        public float StrikeDamage = 15f;
-        public float StrikeStaminaCost = 15f;
+        [Tooltip("Golpes do player (PlayerStrike) pra ele soltar o casco.")]
         public int StrikesToRelease = 3;
         [Tooltip("Velejando acima dessa velocidade por ShakeOffTime segundos, ele se solta.")]
         public float ShakeOffSpeed = 5f;
@@ -129,6 +127,22 @@ namespace Assets._Project.Features.Shark
         [Tooltip("Frequência da batida de cauda (calmo, atacando).")]
         public Vector2 TailSpeed = new Vector2(3f, 6f);
 
+        [Header("Feedback")]
+        [Tooltip("Tremor de câmera quando ele parte pro ataque perto do player.")]
+        public float TelegraphShake = 0.06f;
+        public float RamShake = 0.35f;
+        [Tooltip("Graus que o corpo torce ao levar um golpe.")]
+        public float FlinchRoll = 50f;
+        [Tooltip("Câmera lenta quando ele salta sobre o barco: escala do tempo e duração em segundos reais.")]
+        public Vector2 LeapSlowMotion = new Vector2(0.35f, 0.9f);
+        public AudioClip BiteSound;
+        public AudioClip HurtSound;
+        public AudioClip RamSound;
+        [Tooltip("Saída e queda do salto.")]
+        public AudioClip SplashSound;
+        [Tooltip("Partículas de água na saída e na queda do salto e na batida no casco.")]
+        public GameObject SplashEffect;
+
         [Header("Stuck")]
         [Tooltip("Parado por esse tempo tentando nadar, ele desiste e procura outro ponto.")]
         public float StuckTime = 2f;
@@ -136,6 +150,14 @@ namespace Assets._Project.Features.Shark
         public bool ShowLogs = false;
 
         public State CurrentState { get; private set; }
+
+        // 0 tranquilo, 0.5 rondando a presa, 1 atacando. A trilha de tensão acompanha isso.
+        public float Threat => CurrentState switch
+        {
+            State.Stalk or State.Circle or State.Retreat => 0.5f,
+            State.Chase or State.Bite or State.Leap or State.Ram or State.Latch => 1f,
+            _ => 0f,
+        };
 
         private SwimmingMovement _swimming;
         private HealthComponent _health;
@@ -197,6 +219,7 @@ namespace Assets._Project.Features.Shark
             _swimming = GetComponent<SwimmingMovement>();
             _health = GetComponent<HealthComponent>();
             _health.Died += OnDied;
+            _health.Damaged += OnDamaged;
             _rigidbody = GetComponent<Rigidbody>();
 
             _swimming.HopStarted += OnLeapLaunched;
@@ -237,21 +260,6 @@ namespace Assets._Project.Features.Shark
             Bite.Damage = BiteDamage;
             Bite.RepeatInterval = 0f;
             Bite.gameObject.SetActive(false);
-
-            try
-            {
-                if (Selectable == null && !TryGetComponent(out Selectable))
-                    Selectable = gameObject.AddComponent<SelectableComponent>();
-
-                Selectable.OnClickPressed.AddListener(OnStruck);
-                Selectable.enabled = false;
-            }
-            catch (System.Exception e)
-            {
-                _log.Error($"Could not set up SelectableComponent, strikes disabled: {e.Message}");
-                Selectable = null;
-            }
-
         }
 
         private void Start()
@@ -268,16 +276,16 @@ namespace Assets._Project.Features.Shark
         private void OnDestroy()
         {
             if (_health)
+            {
                 _health.Died -= OnDied;
+                _health.Damaged -= OnDamaged;
+            }
 
             if (_swimming)
             {
                 _swimming.HopStarted -= OnLeapLaunched;
                 _swimming.HopLanded -= OnLeapLanded;
             }
-
-            if (Selectable)
-                Selectable.OnClickPressed.RemoveListener(OnStruck);
         }
 
         private void Update()
@@ -465,6 +473,7 @@ namespace Assets._Project.Features.Shark
             if (!_biteLanded && Target && Target.Health && Target.Health.Current < _preyHealth)
             {
                 _biteLanded = true;
+                Sound.Play(BiteSound, transform.position);
 
                 if (Target.Stamina)
                     Target.Stamina.Drain(BiteStaminaDrain);
@@ -584,6 +593,10 @@ namespace Assets._Project.Features.Shark
             _nextLeapTime = Time.time + LeapCooldown * Aggression(MaxDecayCooldown);
             _log.Log("Rammed the boat");
 
+            CameraFeel.Shake(RamShake);
+            Sound.Play(RamSound, transform.position);
+            Splash();
+
             StartRetreat(-push);
         }
 
@@ -632,6 +645,8 @@ namespace Assets._Project.Features.Shark
                 return;
 
             _leapLaunched = true;
+            Splash();
+            CameraFeel.SlowMotion(LeapSlowMotion.x, LeapSlowMotion.y);
 
             // Velocidade horizontal pra cair em cima do player, considerando o tempo no ar.
             float airTime = 2f * _swimming.JumpVelocity / _swimming.JumpGravity;
@@ -648,6 +663,8 @@ namespace Assets._Project.Features.Shark
         {
             if (CurrentState != State.Leap || !_leapLaunched)
                 return;
+
+            Splash();
 
             bool nearBoat = _leapBoat && FlatDistance(transform.position, _leapBoat.transform.position) < LatchRange;
 
@@ -677,9 +694,6 @@ namespace Assets._Project.Features.Shark
 
             _strikeCount = 0;
             _fastSailTime = 0f;
-
-            if (Selectable)
-                Selectable.enabled = true;
         }
 
         private void UpdateLatch()
@@ -710,27 +724,28 @@ namespace Assets._Project.Features.Shark
             _flooding.AddWater(LatchFloodRate * Time.fixedDeltaTime, transform.position);
         }
 
-        private void OnStruck()
+        // Levou um golpe: torce o corpo e, se não estiver no meio do salto, recua. Preso no casco, conta pra soltar.
+        private void OnDamaged(float amount)
         {
-            if (CurrentState != State.Latch)
+            if (_health.IsDead)
                 return;
 
-            if (Target && Target.Stamina && !Target.Stamina.TryConsume(StrikeStaminaCost))
-                return;
+            _roll = Random.value < 0.5f ? -FlinchRoll : FlinchRoll;
+            Sound.Play(HurtSound, transform.position);
 
-            _strikeCount++;
-            _health.TakeDamage(StrikeDamage);
-
-            _log.Log($"Struck {_strikeCount}/{StrikesToRelease}");
-
-            if (_strikeCount >= StrikesToRelease && CurrentState == State.Latch)
-                ReleaseLatch();
+            if (CurrentState == State.Latch)
+            {
+                if (++_strikeCount >= StrikesToRelease)
+                    ReleaseLatch();
+            }
+            else if (CurrentState != State.Leap && Target)
+            {
+                StartRetreat(-FlatDirectionTo(Target.transform.position));
+            }
         }
 
         private void ReleaseLatch()
         {
-            if (Selectable)
-                Selectable.enabled = false;
             _rigidbody.isKinematic = false;
             _rigidbody.linearVelocity = Vector3.zero;
             _swimming.SetPlanarVelocity(Vector3.zero);
@@ -836,6 +851,10 @@ namespace Assets._Project.Features.Shark
                     break;
             }
 
+            // O bote, o salto e a investida avisam com um tremor leve.
+            if (state is State.Chase or State.Leap or State.Ram && FlatDistance(transform.position, Target.transform.position) < DetectionRadius)
+                CameraFeel.Shake(TelegraphShake, 0.5f);
+
             _log.Log($"State: {state}");
         }
 
@@ -873,6 +892,17 @@ namespace Assets._Project.Features.Shark
                 return 1f;
 
             return Mathf.Lerp(1f, maxDecayMultiplier, world.Decay / (float)WorldStateController.DecayMaximum);
+        }
+
+        private void Splash()
+        {
+            Vector3 surface = transform.position;
+            surface.y = _swimming.TrackedSurfaceHeight;
+
+            Sound.Play(SplashSound, surface);
+
+            if (SplashEffect)
+                Instantiate(SplashEffect, surface, Quaternion.identity);
         }
 
         private float HuntSpeed()
