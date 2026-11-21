@@ -179,7 +179,7 @@ MonoBehaviour:
   PatrolRadius: 20
   PatrolSpeed: 2.5
   PatrolPointTime: 10
-  ChaseSpeed: 5
+  ChaseSpeed: 7
   Bite: {fileID: 0}
   BiteOffset: {x: 0, y: 0, z: 1.5}
   BiteRadius: 0.8
