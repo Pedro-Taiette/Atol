@@ -29,6 +29,7 @@ public sealed class PlayerController : MonoBehaviour
     [Header("HUD")]
     public StatusBarUI StaminaBar;
     public StatusBarUI HealthBar;
+    public PauseMenu PauseMenuPrefab;
 
     [Header("Boat Boarding")]
     [Tooltip("Optional CharacterController reference. If empty, one is searched on this object.")]
@@ -131,8 +132,8 @@ public sealed class PlayerController : MonoBehaviour
             windIndicator = gameObject.AddComponent<WindIndicatorUI>();
         windIndicator.Ocean = Ocean;
 
-        if (GetComponent<PauseMenu>() == null)
-            gameObject.AddComponent<PauseMenu>();
+        if (PauseMenuPrefab != null && FindAnyObjectByType<PauseMenu>() == null)
+            Instantiate(PauseMenuPrefab);
 
         if (GroundedMovement != null && GroundedMovement.Controller == null)
             GroundedMovement.Controller = CharacterController;
