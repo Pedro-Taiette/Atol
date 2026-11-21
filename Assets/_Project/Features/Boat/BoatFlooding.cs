@@ -14,7 +14,7 @@ namespace Assets._Project.Features.Boat
         public float DrainRate = 3f;
         [Tooltip("Freio aplicado no barco quando ele está cheio.")]
         public float MaxSlowdown = 1.5f;
-        public float CapsizeTorque = 6f;
+        public float CapsizeTorque = 16f;
         public float CapsizeTimeout = 4f;
 
         public float Water { get; private set; }
