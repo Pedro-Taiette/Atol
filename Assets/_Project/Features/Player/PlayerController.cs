@@ -69,6 +69,7 @@ public sealed class PlayerController : MonoBehaviour
     private bool waterSamplePending;
     private int waterSampleGeneration;
     private BoatControlHintUI boatControlHint;
+    private WindIndicatorUI windIndicator;
     private bool interactionPressPending;
     private readonly System.Collections.Generic.List<Collider> ignoredBoatColliders = new System.Collections.Generic.List<Collider>(16);
     private readonly System.Collections.Generic.List<Collider> ignoredPlayerColliders = new System.Collections.Generic.List<Collider>(4);
@@ -123,6 +124,11 @@ public sealed class PlayerController : MonoBehaviour
         if (boatControlHint == null)
             boatControlHint = gameObject.AddComponent<BoatControlHintUI>();
         boatControlHint.SetVisible(false);
+
+        windIndicator = GetComponent<WindIndicatorUI>();
+        if (windIndicator == null)
+            windIndicator = gameObject.AddComponent<WindIndicatorUI>();
+        windIndicator.Ocean = Ocean;
 
         if (GroundedMovement != null && GroundedMovement.Controller == null)
             GroundedMovement.Controller = CharacterController;
@@ -224,6 +230,7 @@ public sealed class PlayerController : MonoBehaviour
             currentBoat.Prompt.SetVisible(false);
         nearbyBoat = null;
         boatControlHint?.SetVisible(false);
+        windIndicator?.SetVisible(false);
         interactionPressPending = false;
 
         if (BoatMovement != null)
@@ -374,6 +381,7 @@ public sealed class PlayerController : MonoBehaviour
         // Once aboard, use the compact bottom-left controls hint instead.
         boat.Prompt?.SetVisible(false);
         boatControlHint?.SetVisible(true);
+        windIndicator?.SetVisible(true);
         interactionPressPending = false;
 
         return SetActiveMovement(BoatMovement);
@@ -434,6 +442,8 @@ public sealed class PlayerController : MonoBehaviour
         }
 
         boatControlHint?.SetVisible(false);
+
+        windIndicator?.SetVisible(false);
         isAboardBoat = false;
         previousParent = null;
         currentBoat = null;
@@ -633,6 +643,7 @@ public sealed class PlayerController : MonoBehaviour
                 nearbyBoat.Prompt?.SetVisible(false);
             nearbyBoat = null;
             boatControlHint?.SetVisible(true);
+            windIndicator?.SetVisible(true);
             return;
         }
 

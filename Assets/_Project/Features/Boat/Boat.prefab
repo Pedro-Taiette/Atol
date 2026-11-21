@@ -214,10 +214,10 @@ MonoBehaviour:
     damping: 2.2
     quadraticDamping: 1
     maxRate: 100
-    stability: 6
+    stability: 9
     waveFollow: 0.7
-    vanishingAngle: 110
-    sailHeel: 1.6
+    vanishingAngle: 125
+    sailHeel: 1.1
     turnLean: 0.12
     comfortableHeel: 22
     maximumHeel: 55
@@ -226,7 +226,7 @@ MonoBehaviour:
   sailPower: 7
   sailTrimRate: 0.65
   startingSailTrim: 0.8
-  noGoAngle: 42
+  noGoAngle: 32
   sailSideForce: 0.55
   sailRotationSpeed: 72
   maximumSailRotation: 78
@@ -237,7 +237,7 @@ MonoBehaviour:
   rudderResponse: 2.6
   rudderTorque: 6
   rudderFullSpeed: 3
-  rudderMinAuthority: 0.08
+  rudderMinAuthority: 0.25
   maximumSpeed: 14
   surgeDrag: 0.05
   surgeQuadraticDrag: 0.04
